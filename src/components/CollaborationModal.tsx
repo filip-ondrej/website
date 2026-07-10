@@ -816,7 +816,10 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                 }
 
                 .hero-title {
-                    font: 700 clamp(42px, 6vw, 64px)/1 'Rajdhani', monospace;
+                    /* Height-aware cap: 6vw upper cap relaxed to min(64px, 9vh) so
+                       a wide-but-short viewport can't blow out the fixed-ratio hero.
+                       No-op at the 1440 ref (>=~711px tall → 9vh>=64px → 64px cap). */
+                    font: 700 clamp(42px, 6vw, min(64px, 9vh))/1 'Rajdhani', monospace;
                     color: #FFFFFF;
                     margin: 0 0 18px 0;
                     letter-spacing: -0.02em;

@@ -131,7 +131,7 @@
     border: 1px solid rgba(255,255,255,0.25); /* tiny border for light swatches */
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1024px) {
     .timeline-legend {
         position: static;
         margin: 10px 0 0 0;
@@ -262,7 +262,7 @@
     border: 1px solid #fff;
     border-radius: 6px;
     padding: 20px;
-    width: 400px; max-height: 80vh;
+    width: min(400px, 92vw); max-height: 80vh;
     overflow-y: auto; position: relative; color: #fff;
     font: 14px/1.4 'Rajdhani', sans-serif;
 }
@@ -418,11 +418,18 @@
 
 /* Mobile adjustments */
 @media (max-width: 768px) {
+    .timeline-wrap {
+        padding: 10px 24px;
+    }
+
     .interaction-hint {
         top: auto;
         bottom: 20px;
-        right: 50%;
-        transform: translateX(50%);
+        /* Center without a transform so hintFadeIn's translateY isn't clobbered */
+        left: 0;
+        right: 0;
+        margin-inline: auto;
+        width: fit-content;
         font-size: 12px;
         padding: 8px 12px;
     }
@@ -432,6 +439,12 @@
         right: 6px;
         width: 32px;
         height: 32px;
+    }
+}
+
+@media (max-width: 480px) {
+    .timeline-wrap {
+        padding: 10px 16px;
     }
 }
 @media (prefers-reduced-motion: reduce) {

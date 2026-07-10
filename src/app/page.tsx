@@ -19,10 +19,12 @@ export default function Home() {
             <Hero />
             <TitleReveal />
             <PromoVideo />
-            <TimelineTitle />
-            <ProgressTimeline />
             <ProjectTitle />
             <Projects />
+            {/* reserveBelowPx must stay 0: the title's own --tt-trail is computed so
+                title-bottom → graph-crossing equals the crossing → title-top gap. */}
+            <TimelineTitle reserveBelowPx={0} />
+            <ProgressTimeline />
             <CollaborationTitle />
             <Collaborations />
 

@@ -52,15 +52,17 @@ export default function Collaborations() {
         let raf: number | null = null;
         let last = performance.now();
         let paused = false;
-        let hoverTimeoutId: number | null = null;
-        let isScrollBlockActive = false;
+        let armed = false;
+        let armTimer: number | null = null;
 
         const DRIFT = 40;
         const WHEEL_GAIN = 1.2;
         const DAMPING = 0.9;
         const MIN_VEL = 2;
         const MAX_VEL = 600;
-        const HOVER_DELAY_MS = 1000; // 1 second delay before blocking scroll
+        // Hover must REST on the rail this long before it captures scrolling —
+        // someone scrolling straight through the section must not get trapped.
+        const ARM_DELAY_MS = 1000;
 
         const compute = () => {
             W = row.scrollWidth;
@@ -98,33 +100,40 @@ export default function Collaborations() {
         };
 
         const onWheel = (e: WheelEvent) => {
-            // Only block scroll if hover has been active for the delay period
-            if (isScrollBlockActive && rail.matches(':hover')) {
-                e.preventDefault();
-                e.stopPropagation();
-                const raw = e.deltaY !== 0 ? e.deltaY : e.deltaX;
-                const clamped = Math.max(-120, Math.min(120, raw));
-                velocity += clamped * WHEEL_GAIN;
-                velocity = Math.max(-MAX_VEL, Math.min(MAX_VEL, velocity));
-            }
+            // Once ARMED (cursor rested on the rail for ARM_DELAY_MS), EVERY
+            // wheel gesture — vertical included — drives the rail horizontally
+            // and the page does not scroll until the cursor leaves. Before
+            // arming, events fall through so a passer-by keeps scrolling.
+            if (!armed) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const raw = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+            const clamped = Math.max(-120, Math.min(120, raw));
+            velocity += clamped * WHEEL_GAIN;
+            velocity = Math.max(-MAX_VEL, Math.min(MAX_VEL, velocity));
         };
 
         const onEnter = () => {
             paused = true;
-            // Start timer for scroll blocking
-            hoverTimeoutId = window.setTimeout(() => {
-                isScrollBlockActive = true;
-            }, HOVER_DELAY_MS);
+            armTimer = window.setTimeout(() => {
+                armed = true;
+                // Hard lock: Chrome delivers NON-cancelable wheel events during
+                // aggressive gestures (preventDefault silently ignored), which
+                // let a single native scroll step slip through. While this attr
+                // is set, 00_ProgressLine's scroll handler snaps any scroll not
+                // initiated by itself straight back — nothing can move the page.
+                document.documentElement.setAttribute('data-rail-hijack', '');
+            }, ARM_DELAY_MS);
         };
 
         const onLeave = () => {
             paused = false;
-            // Clear timer and disable scroll blocking
-            if (hoverTimeoutId) {
-                clearTimeout(hoverTimeoutId);
-                hoverTimeoutId = null;
+            if (armTimer) {
+                clearTimeout(armTimer);
+                armTimer = null;
             }
-            isScrollBlockActive = false;
+            armed = false;
+            document.documentElement.removeAttribute('data-rail-hijack');
         };
 
         const onFocusIn = () => { paused = true; };
@@ -144,7 +153,8 @@ export default function Collaborations() {
 
         return () => {
             if (raf) cancelAnimationFrame(raf);
-            if (hoverTimeoutId) clearTimeout(hoverTimeoutId);
+            if (armTimer) clearTimeout(armTimer);
+            document.documentElement.removeAttribute('data-rail-hijack');
             ro.disconnect();
             rail.removeEventListener('wheel', onWheel as EventListener);
             rail.removeEventListener('mouseenter', onEnter);
@@ -509,7 +519,9 @@ export default function Collaborations() {
                     position: absolute;
                     left: clamp(8px, 2vw, 12px);
                     bottom: clamp(6px, 1.5vw, 8px);
-                    font-size: clamp(11px, 2vw, 14px);
+                    /* rem so it rides the fluid root (the raw-vw clamp pinned it at
+                       14px across all desktop widths — oversized vs. the tile). */
+                    font-size: clamp(9px, 0.75rem, 14px);
                     font-family: 'Rajdhani', monospace;
                     font-weight: 500;
                     letter-spacing: 0.12em;

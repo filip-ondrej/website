@@ -18,8 +18,30 @@ export default function ScrollVideo({
     const [progress, setProgress] = React.useState(0);
     const [isHovering, setIsHovering] = React.useState(false);
     const [isFullscreen, setIsFullscreen] = React.useState(false);
+
+    // Mount the looping background player only when the section is within one
+    // viewport of view (loading speed: the iframe + Vimeo player boot are heavy
+    // and this section starts ~2 viewports below the fold). One-shot.
+    const [playerReady, setPlayerReady] = React.useState(false);
+    React.useEffect(() => {
+        const el = sectionRef.current;
+        if (!el) return;
+        const io = new IntersectionObserver(
+            (entries) => {
+                if (entries[0]?.isIntersecting) {
+                    setPlayerReady(true);
+                    io.disconnect();
+                }
+            },
+            { rootMargin: '100% 0px' }
+        );
+        io.observe(el);
+        return () => io.disconnect();
+    }, []);
     const fullscreenIframeRef = React.useRef<HTMLIFrameElement>(null);
     const backdropRef = React.useRef<HTMLDivElement>(null);
+    const closeBtnRef = React.useRef<HTMLButtonElement>(null);
+    const backgroundIframeRef = React.useRef<HTMLIFrameElement>(null);
 
     // Extract Vimeo ID from URL
     const getVimeoId = (url: string) => {
@@ -31,6 +53,17 @@ export default function ScrollVideo({
     const fullscreenVideoId = getVimeoId(fullscreenVideoUrl);
 
     React.useEffect(() => {
+        // Motion-sensitive users: the grow/rise/fade is JS-driven (inline
+        // transforms), so a CSS media query can't disable it. Honour the
+        // preference here by pinning progress to its final state — the video
+        // shows full-size, centered and fully visible, with no scroll animation.
+        const reduceMotion =
+            window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+        if (reduceMotion) {
+            setProgress(1);
+            return;
+        }
+
         let raf = 0;
 
         const calc = () => {
@@ -74,9 +107,26 @@ export default function ScrollVideo({
     React.useEffect(() => {
         if (!isFullscreen) return;
 
-        const handleEsc = (e: KeyboardEvent) => {
+        const handleKeydown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
                 setIsFullscreen(false);
+                return;
+            }
+            // Focus trap: keep Tab cycling inside the dialog.
+            if (e.key === 'Tab' && backdropRef.current) {
+                const focusables = backdropRef.current.querySelectorAll<HTMLElement>(
+                    'button, [href], iframe, [tabindex]:not([tabindex="-1"])'
+                );
+                if (focusables.length === 0) return;
+                const first = focusables[0];
+                const last = focusables[focusables.length - 1];
+                if (e.shiftKey && document.activeElement === first) {
+                    e.preventDefault();
+                    last.focus();
+                } else if (!e.shiftKey && document.activeElement === last) {
+                    e.preventDefault();
+                    first.focus();
+                }
             }
         };
 
@@ -86,8 +136,18 @@ export default function ScrollVideo({
         document.body.style.top = `-${scrollY}px`;
         document.body.style.width = '100%';
 
+        // A11y: remember what was focused, then move focus into the dialog.
+        const previouslyFocused = document.activeElement as HTMLElement | null;
+        requestAnimationFrame(() => closeBtnRef.current?.focus());
+
         // Setup Vimeo listener for video end AND fullscreen changes
         const setupVimeoListener = () => {
+            // Pause the looping background video while the modal is open (perf).
+            if (backgroundIframeRef.current && window.Vimeo) {
+                try {
+                    new window.Vimeo.Player(backgroundIframeRef.current).pause();
+                } catch {}
+            }
             if (fullscreenIframeRef.current && window.Vimeo) {
                 const player = new window.Vimeo.Player(fullscreenIframeRef.current);
 
@@ -117,10 +177,18 @@ export default function ScrollVideo({
             setupVimeoListener();
         }
 
-        document.addEventListener('keydown', handleEsc);
+        document.addEventListener('keydown', handleKeydown);
 
         return () => {
-            document.removeEventListener('keydown', handleEsc);
+            document.removeEventListener('keydown', handleKeydown);
+
+            // Resume the background video and return focus to the trigger.
+            if (backgroundIframeRef.current && window.Vimeo) {
+                try {
+                    new window.Vimeo.Player(backgroundIframeRef.current).play();
+                } catch {}
+            }
+            previouslyFocused?.focus();
 
             // Reset styles
             document.body.style.position = '';
@@ -157,7 +225,12 @@ export default function ScrollVideo({
     const eased = 1 - Math.pow(1 - progress, 3);
 
     const scale = 0.5 + 0.5 * eased;
-    const translateY = (1 - eased) * 35;
+    // Reveal-time down-push only: the small video starts ~12vh below centre and
+    // eases up TO centre as it grows — so the full-size hold lands dead-centre,
+    // while the reveal still rises into place. Reduced from 35 so the revealing
+    // video isn't parked low (which opened the dark gap under the §2 title).
+    const REVEAL_DROP_VH = 12;
+    const translateY = (1 - eased) * REVEAL_DROP_VH;
     const opacity = Math.min(1, progress * 3);
 
     return (
@@ -190,11 +263,25 @@ export default function ScrollVideo({
                 >
                     <div
                         className="video-container will-change-transform"
+                        role="button"
+                        tabIndex={0}
+                        aria-label="Play promo video"
                         onMouseEnter={() => setIsHovering(true)}
                         onMouseLeave={() => setIsHovering(false)}
+                        onFocus={() => setIsHovering(true)}
+                        onBlur={() => setIsHovering(false)}
                         onClick={() => setIsFullscreen(true)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setIsFullscreen(true);
+                            }
+                        }}
                         style={{
-                            width: 'calc(100vw - 300px)',
+                            // Fluid side inset: was fixed 300px total (150px/side) at 1440.
+                            // 150px → clamp(gutter, 10.42vw, 9.375rem). Never crosses inside the gutter.
+                            // At 1440: 10.42vw=150px → 100vw-2*150px = calc(100vw-300px) (no-op).
+                            width: 'calc(100vw - 2 * clamp(var(--gutter), 10.42vw, 9.375rem))',
                             aspectRatio: '16 / 9',
                             transform: `translateY(${translateY}vh) scale(${scale})`,
                             transformOrigin: 'center center',
@@ -207,8 +294,10 @@ export default function ScrollVideo({
                             position: 'relative',
                         }}
                     >
-                        {/* Background looping video */}
+                        {/* Background looping video (mounted on approach, see playerReady) */}
+                        {playerReady && (
                         <iframe
+                            ref={backgroundIframeRef}
                             title="Background video"
                             src={`https://player.vimeo.com/video/${backgroundVideoId}?background=1&autoplay=1&loop=1&autopause=0&muted=1`}
                             allow="autoplay; fullscreen; picture-in-picture"
@@ -222,6 +311,7 @@ export default function ScrollVideo({
                                 pointerEvents: 'none',
                             }}
                         />
+                        )}
 
                         {/* Play button overlay */}
                         <div
@@ -280,6 +370,9 @@ export default function ScrollVideo({
                 <div
                     ref={backdropRef}
                     className="fullscreen-modal"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="Promo video"
                     style={{
                         position: 'fixed',
                         inset: 0,
@@ -299,8 +392,11 @@ export default function ScrollVideo({
                         {/* Fullscreen video */}
                         <div
                             style={{
-                                width: '90vw',
-                                maxWidth: '1600px',
+                                /* Fit BOTH dimensions: cap width by height too, so the
+                                   16:9 video never exceeds the viewport on short/wide
+                                   screens (which used to overflow and shove the close
+                                   button off-screen). */
+                                width: 'min(90vw, calc(90vh * 16 / 9), 1600px)',
                                 aspectRatio: '16 / 9',
                             }}
                         >
@@ -317,17 +413,20 @@ export default function ScrollVideo({
                                 }}
                             />
                         </div>
-
-                        {/* Close button - positioned OUTSIDE the video container */}
-                        <button
-                            className="close-btn"
-                            onClick={() => setIsFullscreen(false)}
-                            aria-label="Close"
-                        >
-                            <span className="close-line" />
-                            <span className="close-line" />
-                        </button>
                     </div>
+
+                    {/* Close button — sibling of the (scaled) lightbox so its position
+                        isn't affected by that transform; anchored to the screen corner
+                        so it's always reachable regardless of the video's size. */}
+                    <button
+                        ref={closeBtnRef}
+                        className="close-btn"
+                        onClick={() => setIsFullscreen(false)}
+                        aria-label="Close video"
+                    >
+                        <span className="close-line" />
+                        <span className="close-line" />
+                    </button>
                 </div>
             )}
 
@@ -356,9 +455,13 @@ export default function ScrollVideo({
                 }
 
                 .close-btn {
+                    /* Anchored to the modal's top-right corner (the modal is fixed
+                       inset:0, so this is effectively the screen corner). Always on
+                       screen, independent of the video's size. */
                     position: absolute;
-                    top: -50px;
-                    right: -50px;
+                    top: 20px;
+                    right: 20px;
+                    z-index: 1;
                     width: 44px;
                     height: 44px;
                     background: rgba(0, 0, 0, 0.7);
@@ -416,28 +519,14 @@ export default function ScrollVideo({
                     visibility: hidden !important;
                 }
 
-                @media (max-width: 1024px) {
-                    .video-container {
-                        width: calc(100vw - 200px) !important;
-                    }
-                    
-                    .close-btn {
-                        top: 20px;
-                        right: 20px;
-                    }
-                }
-
+                /* Close button is now screen-corner anchored at all sizes; only its
+                   footprint shrinks a touch on small screens. */
                 @media (max-width: 768px) {
-                    .video-container {
-                        width: calc(100vw - 60px) !important;
-                        border-radius: 0;
-                    }
-
                     .close-btn {
-                        top: 10px !important;
-                        right: 10px !important;
-                        width: 40px !important;
-                        height: 40px !important;
+                        top: 12px;
+                        right: 12px;
+                        width: 40px;
+                        height: 40px;
                     }
                 }
 
@@ -458,6 +547,8 @@ declare global {
         Vimeo?: {
             Player: new (iframe: HTMLIFrameElement) => {
                 on: (event: string, callback: (data: { fullscreen: boolean }) => void) => void;
+                pause: () => void;
+                play: () => void;
             };
         };
     }

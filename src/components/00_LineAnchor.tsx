@@ -24,20 +24,38 @@ export function LineAnchor({
             const rect = ref.current.getBoundingClientRect();
             const scrollY = window.scrollY;
 
+            // Scale the edge offset using the MINIMUM of two laws, which cross at
+            // the 1440px design reference (both = 1.0):
+            //   • width law (innerWidth/1440): dominates BELOW 1440, so the spine
+            //     keeps shrinking on small screens (~half its inset at 500px),
+            //     staying just outside the content gutter.
+            //   • root-font law (rootFont/16): dominates ABOVE 1440, matching the
+            //     6.25rem gutter/cage cap so the spine doesn't overshoot the
+            //     footer/press cage lines (which compute the same min internally).
+            // offsetX is the value at 1440px. Clamped so it never hugs the edge on
+            // phones or drifts too far on huge displays.
+            const REF_WIDTH = 1440;
+            const rootFontPx =
+                parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+            const widthScale = window.innerWidth / REF_WIDTH;
+            const fontScale = rootFontPx / 16;
+            const uiScale = Math.min(1.6, Math.max(0.18, Math.min(widthScale, fontScale)));
+            const scaledOffsetX = offsetX * uiScale;
+
             // Calculate X position relative to VIEWPORT, not container
             let x: number;
 
             if (position === 'left') {
                 // Left edge of viewport + offset
-                x = offsetX;
+                x = scaledOffsetX;
             } else if (position === 'center') {
                 // Center of viewport + offset
-                x = window.innerWidth / 2 + offsetX;
+                x = window.innerWidth / 2 + scaledOffsetX;
             } else if (position === 'right') {
                 // Right edge of viewport - offset
-                x = window.innerWidth - offsetX;
+                x = window.innerWidth - scaledOffsetX;
             } else {
-                x = offsetX;
+                x = scaledOffsetX;
             }
 
             // Y position is based on where the anchor element actually is

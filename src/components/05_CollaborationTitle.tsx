@@ -6,11 +6,9 @@ import { LineAnchor } from '@/components/00_LineAnchor';
 
 export type CollaborationTitleProps = {
     lines?: string[];
-    height?: number | string;     // section height
     className?: string;
     scale?: number;               // font size multiplier
     rightOffsetPx?: number;       // horizontal offset of the title FROM THE RIGHT EDGE
-    underOffsetPx?: number;       // px below middle for the "under" point
     reserveBelowPx?: number;      // spacing below the title block
     showAnchors?: boolean;
     debugGuides?: boolean;
@@ -21,23 +19,29 @@ const styles = `
 .ct-wrap {
   position: relative;
   width: 100%;
-  height: 100%;
   container-type: inline-size;
   isolation: isolate;
   z-index: 1;
+  /* Bounded Journey: content-driven height = compact lead-in + title + small
+     trailing, instead of a fixed box. The lead-in is constant across all title
+     sections regardless of line count, so every gap matches and nothing clips
+     at any width. */
+  display: flex;
+  flex-direction: column;
+  padding-top: calc(var(--ct-lead) + var(--ct-gap));
+  padding-bottom: var(--ct-trail);
 }
 
-/* Title block: positioned using top (calc from 50% + offset) */
+/* Title block — normal flow, RIGHT-aligned, offset from the right by --ct-right */
 .ct-title {
-  position: absolute;
-  top: var(--ct-under);
-  right: var(--ct-right);
-  margin: 0;
+  position: relative;
+  align-self: flex-end;
+  margin: 0 var(--ct-right) 0 0;
 
   display: flex;
   flex-direction: column;
-  justify-content: center;
   gap: 0.04em;
+  text-align: right;
 
   font-family: var(--font-sans, Rajdhani), monospace;
   text-transform: uppercase;
@@ -47,8 +51,8 @@ const styles = `
   font-weight: 900;
   pointer-events: none;
 
-  --ct-scale: 0.8;
-  --ct-right: 200px;
+  /* --ct-scale and --ct-right are set inline on .ct-wrap from the scale and
+     rightOffsetPx props (prop-driven, no-op at the 1440 reference). */
   --ct-size: calc(var(--ct-scale) * clamp(64px, 8.4cqi, 160px));
 }
 @supports not (font-size: 1cqi) {
@@ -96,24 +100,13 @@ const styles = `
 .ct-tunnel-svg {
   position: absolute;
   bottom: 12px;
-  right: 100px;
+  /* Track the spine exactly — one source of truth (--ct-spine-x, set inline on .ct-wrap). */
+  right: var(--ct-spine-x);
   width: clamp(80px, 11vw, 100px);
   height: clamp(16px, 2.5vw, 20px);
   transform: translateX(50%) translateY(3px);
   pointer-events: none;
   overflow: visible;
-}
-
-@media (max-width: 1024px) {
-  .ct-tunnel-svg {
-    right: 60px;
-  }
-}
-
-@media (max-width: 640px) {
-  .ct-tunnel-svg {
-    right: 40px;
-  }
 }
 
 .ct-tunnel-ellipse {
@@ -150,11 +143,9 @@ interface WindowWithLine extends Window {
 
 export default function CollaborationTitle({
                                                lines = ['TRUSTED BY THE BEST'],
-                                               height = 'clamp(360px, 55vh, 640px)',   // compact section height
                                                className,
-                                               scale = 1,
+                                               scale = 0.785,
                                                rightOffsetPx = 200,
-                                               underOffsetPx = 100,
                                                reserveBelowPx = 30,
                                                showAnchors = true,
                                                debugGuides = false,
@@ -217,23 +208,40 @@ export default function CollaborationTitle({
         };
     }, []);
 
-    const computedHeight = typeof height === 'number' ? `${height}px` : height;
-
     // Split lines into words for the slide-up animation
     const allLines = React.useMemo(
         () => lines.map((line) => line.split(' ').filter(Boolean)),
         [lines]
     );
 
-    // Shared CSS variables: title positioned from RIGHT
+    // Shared CSS variables: title positioned from RIGHT. Bounded Journey: the line
+    // + title sit at a compact, constant lead-in from the top (not 50% of a tall
+    // box), so the gap matches the other title sections regardless of line count.
+    // The section is fully content-driven.
     const wrapperStyle: React.CSSProperties & {
         ['--ct-scale']: string;
         ['--ct-right']: string;
+        ['--ct-spine-x']: string;
+        ['--ct-lead']: string;
+        ['--ct-gap']: string;
+        ['--ct-trail']: string;
         ['--ct-under']: string;
     } = {
         ['--ct-scale']: String(scale),
-        ['--ct-right']: `${rightOffsetPx}px`,
-        ['--ct-under']: `calc(50% + ${underOffsetPx}px)`,
+        // Fluid right-edge offset (see --ct-right in styles): floors at gutter, caps at rem,
+        // tracks vw so it stays glued to the spine on resize. No-op at 1440.
+        ['--ct-right']: `clamp(var(--gutter), ${rightOffsetPx / 14.4}vw, ${rightOffsetPx / 16}rem)`,
+        // The vertical spine's x-position (from either edge), mirroring 00_LineAnchor's uiScale.
+        ['--ct-spine-x']: 'clamp(18px, min(6.944vw, 6.25rem), 160px)',
+        // lead-in (space above the line) — compact, the gap from the previous section
+        ['--ct-lead']: 'clamp(140px, 26vh, 300px)',
+        // line→title gap == the title's RIGHT inset (spine→title, this title is right-
+        // aligned), so top & right stay equal and both scale with width. 100px at 1440.
+        ['--ct-gap']: 'calc(var(--ct-right) - var(--ct-spine-x))',
+        // trailing below the title — smaller than the lead-in
+        ['--ct-trail']: 'clamp(20px, 4vh, 50px)',
+        // title top / under-anchor point
+        ['--ct-under']: 'calc(var(--ct-lead) + var(--ct-gap))',
     };
 
     return (
@@ -246,7 +254,7 @@ export default function CollaborationTitle({
                     visible && 'ct-wrap--visible',
                     tunnelReady && 'ct-wrap--tunnel-ready'
                 )}
-                style={{ ...wrapperStyle, height: computedHeight, marginBottom: reserveBelowPx }}
+                style={{ ...wrapperStyle, marginBottom: reserveBelowPx }}
                 aria-hidden="true"
             >
                 <style>{styles}</style>
@@ -264,11 +272,11 @@ export default function CollaborationTitle({
                         <div className="absolute left-0 top-[12px]">
                             <LineAnchor id="ct-start-left-top" position="left" offsetX={100} />
                         </div>
-                        {/* Middle horizontal line */}
-                        <div className="absolute left-0 top-1/2 w-0">
+                        {/* Middle horizontal line - rides the title's lead-in (Bounded Journey) */}
+                        <div className="absolute left-0 w-0" style={{ top: 'var(--ct-lead)' }}>
                             <LineAnchor id="ct-middle-left" position="left" offsetX={100} />
                         </div>
-                        <div className="absolute right-0 top-1/2 w-0">
+                        <div className="absolute right-0 w-0" style={{ top: 'var(--ct-lead)' }}>
                             <LineAnchor id="ct-middle-right" position="right" offsetX={100} />
                         </div>
                         {/* Under anchor on the RIGHT */}
@@ -404,8 +412,6 @@ export default function CollaborationTitle({
                     ))}
                 </h1>
             </div>
-
-            <style jsx global>{``}</style>
         </>
     );
 }

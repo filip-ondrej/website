@@ -6,11 +6,9 @@ import { LineAnchor } from '@/components/00_LineAnchor';
 
 export type PressRecognitionTitleProps = {
     lines?: string[];
-    height?: number | string;     // section height
     className?: string;
     scale?: number;               // font size multiplier
     leftOffsetPx?: number;        // horizontal offset of the title FROM THE LEFT EDGE
-    underOffsetPx?: number;       // px below middle for the "under" point
     reserveBelowPx?: number;      // spacing below the title block
     showAnchors?: boolean;
     debugGuides?: boolean;
@@ -30,22 +28,22 @@ const styles = `
 .prt-wrap {
   position: relative;
   width: 100%;
-  height: 100%;
   container-type: inline-size;
   isolation: isolate;
   z-index: 1;
+  display: flex;
+  flex-direction: column;
+  padding-top: calc(var(--prt-lead) + var(--prt-gap));
+  padding-bottom: var(--prt-trail);
 }
 
-/* Title block: positioned using top (calc from 50% + offset), LEFT aligned */
+/* Title block — normal flow, LEFT-aligned, offset left by --prt-left */
 .prt-title {
-  position: absolute;
-  top: var(--prt-under);
-  left: var(--prt-left);
-  margin: 0;
+  position: relative;
+  margin: 0 0 0 var(--prt-left);
 
   display: flex;
   flex-direction: column;
-  justify-content: center;
   gap: 0.04em;
 
   font-family: var(--font-sans, Rajdhani), monospace;
@@ -56,8 +54,8 @@ const styles = `
   font-weight: 900;
   pointer-events: none;
 
-  --prt-scale: 0.8;
-  --prt-left: 200px;
+  /* --prt-scale and --prt-left are set inline on .prt-wrap from the scale and
+     leftOffsetPx props (prop-driven, no-op at the 1440 reference). */
   --prt-size: calc(var(--prt-scale) * clamp(64px, 8.4cqi, 160px));
 }
 @supports not (font-size: 1cqi) {
@@ -105,24 +103,13 @@ const styles = `
 .prt-tunnel-svg {
   position: absolute;
   top: 42px;
-  right: 100px;
+  /* Track the spine exactly — one source of truth (--prt-spine-x, set inline on .prt-wrap). */
+  right: var(--prt-spine-x);
   width: clamp(80px, 11vw, 100px);
   height: clamp(16px, 2.5vw, 20px);
   transform: translateX(50%) translateY(calc(-50% + 6px));
   pointer-events: none;
   overflow: visible;
-}
-
-@media (max-width: 1024px) {
-  .prt-tunnel-svg {
-    right: 60px;
-  }
-}
-
-@media (max-width: 640px) {
-  .prt-tunnel-svg {
-    right: 40px;
-  }
 }
 
 .prt-tunnel-ellipse {
@@ -151,11 +138,9 @@ const styles = `
 
 export default function PressRecognitionTitle({
                                                   lines = ['PRESS & RECOGNITION'],
-                                                  height = 'clamp(360px, 55vh, 640px)',
                                                   className,
-                                                  scale = 1,
+                                                  scale = 0.785,
                                                   leftOffsetPx = 200,
-                                                  underOffsetPx = 100,
                                                   reserveBelowPx = 30,
                                                   showAnchors = true,
                                                   debugGuides = false,
@@ -217,8 +202,6 @@ export default function PressRecognitionTitle({
         };
     }, []);
 
-    const computedHeight = typeof height === 'number' ? `${height}px` : height;
-
     const allLines = React.useMemo(
         () => lines.map((line) => line.split(' ').filter(Boolean)),
         [lines]
@@ -227,11 +210,24 @@ export default function PressRecognitionTitle({
     const wrapperStyle: React.CSSProperties & {
         ['--prt-scale']: string;
         ['--prt-left']: string;
+        ['--prt-spine-x']: string;
+        ['--prt-lead']: string;
+        ['--prt-gap']: string;
+        ['--prt-trail']: string;
         ['--prt-under']: string;
     } = {
         ['--prt-scale']: String(scale),
-        ['--prt-left']: `${leftOffsetPx}px`,
-        ['--prt-under']: `calc(50% + ${underOffsetPx}px)`,
+        // Fluid offset (see --prt-left in styles): floors at gutter, caps at rem, tracks vw
+        // so it stays aligned to the spine on resize. No-op at 1440.
+        ['--prt-left']: `clamp(var(--gutter), ${leftOffsetPx / 14.4}vw, ${leftOffsetPx / 16}rem)`,
+        // The vertical spine's x-position, mirroring 00_LineAnchor's uiScale exactly.
+        ['--prt-spine-x']: 'clamp(18px, min(6.944vw, 6.25rem), 160px)',
+        ['--prt-lead']: 'clamp(140px, 26vh, 300px)',
+        // line→title gap == the title's LEFT inset (spine→title), so top & left stay
+        // equal and both scale with width. = 100px at 1440 (no-op).
+        ['--prt-gap']: 'calc(var(--prt-left) - var(--prt-spine-x))',
+        ['--prt-trail']: 'clamp(20px, 4vh, 50px)',
+        ['--prt-under']: 'calc(var(--prt-lead) + var(--prt-gap))',
     };
 
     return (
@@ -243,7 +239,7 @@ export default function PressRecognitionTitle({
                     className,
                     tunnelReady && 'prt-wrap--tunnel-ready'
                 )}
-                style={{ ...wrapperStyle, height: computedHeight, marginBottom: reserveBelowPx }}
+                style={{ ...wrapperStyle, marginBottom: reserveBelowPx }}
                 aria-hidden="true"
             >
                 <style>{styles}</style>
@@ -262,10 +258,10 @@ export default function PressRecognitionTitle({
                             <LineAnchor id="prt-start-right-top" position="right" offsetX={100} />
                         </div>
                         {/* Middle anchors */}
-                        <div className="absolute right-0 top-1/2 w-0">
+                        <div className="absolute right-0 w-0" style={{ top: 'var(--prt-lead)' }}>
                             <LineAnchor id="prt-middle-right" position="right" offsetX={100} />
                         </div>
-                        <div className="absolute left-0 top-1/2 w-0">
+                        <div className="absolute left-0 w-0" style={{ top: 'var(--prt-lead)' }}>
                             <LineAnchor id="prt-middle-left" position="left" offsetX={100} />
                         </div>
                         {/* Under + bottom */}
@@ -400,8 +396,6 @@ export default function PressRecognitionTitle({
                     ))}
                 </h1>
             </div>
-
-            <style jsx global>{``}</style>
         </>
     );
 }

@@ -3,14 +3,13 @@
 import * as React from 'react';
 import clsx from 'clsx';
 import { LineAnchor } from '@/components/00_LineAnchor';
+import { useScrollProgress, useChasingTypewriter } from '@/lib/titleTypewriter';
 
 type TitleHeaderProps = {
     lines?: string[];
-    height?: number | string;     // component's own height - REDUCED default
     className?: string;
     scale?: number;               // font size multiplier
-    leftOffsetPx?: number;        // horizontal offset of the title
-    underOffsetPx?: number;       // px below middle for the "under" point (default 100)
+    rightOffsetPx?: number;       // horizontal offset of the title from the RIGHT edge
     reserveBelowPx?: number;      // real spacing below the title section to separate timeline (default 96)
     showAnchors?: boolean;
     debugGuides?: boolean;
@@ -22,109 +21,34 @@ type TitleHeaderProps = {
     startDelayMs?: number;        // optional start delay after intersect (default 0)
 };
 
-function useScrollProgress(ref: React.RefObject<HTMLElement | null>) {
-    const [progress, setProgress] = React.useState(0);
-    const [isPaused, setIsPaused] = React.useState(false);
-    const lastProgress = React.useRef(0);
-    const lastChangeAt = React.useRef<number>(Date.now());
-
-    React.useEffect(() => {
-        const el = ref.current;
-        if (!el) return;
-
-        let rafId: number | null = null;
-
-        const tick = () => {
-            const rect = el.getBoundingClientRect();
-            const vh = window.innerHeight || 1;
-            const start = vh - 150;
-            const end = vh * 0.4;
-            const p = 1 - Math.max(0, Math.min(1, (rect.top - end) / (start - end)));
-            setProgress(p);
-
-            const diff = Math.abs(p - lastProgress.current);
-            if (diff > 0.005) {
-                lastChangeAt.current = Date.now();
-                setIsPaused(false);
-            } else if (p > 0.01 && p < 0.99) {
-                if (Date.now() - lastChangeAt.current > 500) setIsPaused(true);
-            }
-            lastProgress.current = p;
-            rafId = null;
-        };
-
-        const onScroll = () => {
-            if (rafId != null) return;
-            rafId = requestAnimationFrame(tick);
-        };
-
-        onScroll();
-        window.addEventListener('scroll', onScroll, { passive: true });
-        window.addEventListener('resize', onScroll, { passive: true });
-
-        const intervalId = window.setInterval(() => {
-            const p = lastProgress.current;
-            if (p > 0.01 && p < 0.99 && Date.now() - lastChangeAt.current > 500) setIsPaused(true);
-        }, 120);
-
-        return () => {
-            if (rafId) cancelAnimationFrame(rafId);
-            window.removeEventListener('scroll', onScroll);
-            window.removeEventListener('resize', onScroll);
-            window.clearInterval(intervalId);
-        };
-    }, [ref]);
-
-    return { progress, isPaused };
-}
-
-function useChasingTypewriter(targetChars: number, charDelay = 50, lockTo?: number) {
-    const [count, setCount] = React.useState(0);
-
-    React.useEffect(() => {
-        const desired = typeof lockTo === 'number' ? lockTo : targetChars;
-        if (count === desired) return;
-
-        const typing = desired > count;
-        const delay = typing ? charDelay : charDelay / 2;
-
-        const id = window.setInterval(() => {
-            setCount(cur => {
-                if (typing) {
-                    const next = cur + 1;
-                    return next >= desired ? desired : next;
-                } else {
-                    const next = cur - 1;
-                    return next <= desired ? desired : next;
-                }
-            });
-        }, delay);
-
-        return () => window.clearInterval(id);
-    }, [targetChars, charDelay, count, lockTo]);
-
-    return count;
-}
-
 /* ================= Styles ================= */
 const styles = `
 .tt-wrap {
-  position: relative; width: 100%; height: 100%;
+  position: relative; width: 100%;
   container-type: inline-size;
   isolation: isolate;
   z-index: 1;
+  /* Bounded Journey: content-driven height = compact lead-in + title + small
+     trailing, instead of a fixed ~2x-tall box. The lead-in is constant across
+     all title sections regardless of line count, so every gap matches and
+     nothing clips at any width. */
+  display: flex;
+  flex-direction: column;
+  padding-top: calc(var(--tt-lead) + var(--tt-gap));
+  padding-bottom: var(--tt-trail);
 }
 
-/* Title block: positioned using top (calc from 50% + offset) */
+/* Title block: in normal flow, RIGHT-aligned — the mirrored journey descends
+   the right side, and the title hugs the line with the same inset law the
+   other titles use (offset from the spine == the line→title gap). */
 .tt-title {
-  position: absolute;
-  top: var(--tt-under);
-  left: var(--tt-left);
-  margin: 0;
+  position: relative;
+  margin: 0 var(--tt-right) 0 auto;
+  text-align: right;
 
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  align-items: flex-end;
   gap: 0.04em;
 
   font-family: var(--font-sans, Rajdhani), monospace;
@@ -135,8 +59,9 @@ const styles = `
   font-weight: 900;
   pointer-events: none;
 
-  --tt-scale: 0.8;
-  --tt-left: 200px;
+  /* --tt-scale and --tt-right are set inline on .tt-wrap from the scale and
+     rightOffsetPx props (prop-driven, fluid, no-op at the 1440 reference). They
+     used to be hardcoded here, which silently overrode the props — removed. */
   --tt-size: calc(var(--tt-scale) * clamp(64px, 8.4cqi, 160px));
 }
 @supports not (font-size: 1cqi) {
@@ -158,7 +83,11 @@ const styles = `
 .tt-ch { display:inline-block; opacity:0; }
 .tt-ch--v { opacity:1; }
 
-.tt-cur { display:inline-block; width:3px; height:0.9em; background: rgba(255,255,255,0.9); margin-left:4px; vertical-align:middle; opacity:0; }
+/* Cursor takes ZERO net layout width (margin-right compensates width+gap):
+   it overhangs after the last typed char instead of widening the line. With
+   the right-aligned title, an in-flow cursor made whichever line carried it
+   7px wider — so the lines' right edges never matched. */
+.tt-cur { display:inline-block; width:3px; height:0.9em; background: rgba(255,255,255,0.9); margin-left:4px; margin-right:-7px; vertical-align:middle; opacity:0; }
 .tt-cur--typing { opacity:1; animation:none; }
 .tt-cur--paused { opacity:1; animation: ttBlink .8s step-end infinite; }
 .tt-cur--done   { opacity:1; animation: ttBlink .8s step-end 4, ttFade .6s ease-out 2.5s forwards; }
@@ -178,11 +107,9 @@ const styles = `
 
 export default function TimelineTitle({
                                           lines = ['Every Lesson.', 'Every Pivot.', 'Every Win.'],
-                                          height = 'clamp(900px, 100vh, 1400px)',
                                           className,
-                                          scale = 1,
-                                          leftOffsetPx = 200,
-                                          underOffsetPx = 100,
+                                          scale = 0.785,
+                                          rightOffsetPx = 200,
                                           reserveBelowPx = 96,
                                           showAnchors = true,
                                           debugGuides = false,
@@ -194,6 +121,22 @@ export default function TimelineTitle({
                                           startDelayMs = 0,
                                       }: TitleHeaderProps) {
     const ref = React.useRef<HTMLDivElement | null>(null);
+
+    // Respect prefers-reduced-motion. The typewriter reveal + cursor are JS-driven,
+    // so the CSS @media block can't disable them; we short-circuit to the fully-typed
+    // title, statically, with no scroll animation. (Same a11y gap as §3 PromoVideo.)
+    const [reducedMotion, setReducedMotion] = React.useState(false);
+    React.useEffect(() => {
+        const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+        const apply = () => setReducedMotion(mq.matches);
+        apply();
+        mq.addEventListener('change', apply);
+        return () => mq.removeEventListener('change', apply);
+    }, []);
+
+    // One-time completion latch (set at 80% of gated progress, below). Declared up
+    // here so it can freeze the scroll listener once typing is done.
+    const [lockedComplete, setLockedComplete] = React.useState(false);
 
     // Start gate: begin typing only once the section actually enters the viewport
     const [started, setStarted] = React.useState(false);
@@ -220,7 +163,7 @@ export default function TimelineTitle({
         return () => io.disconnect();
     }, [started, startThreshold, startRootMargin, startDelayMs]);
 
-    const { progress, isPaused } = useScrollProgress(ref);
+    const { progress, isPaused } = useScrollProgress(ref, lockedComplete || reducedMotion);
     const gatedProgress = started ? progress : 0;
 
     const totalChars = React.useMemo(
@@ -228,8 +171,7 @@ export default function TimelineTitle({
         [lines]
     );
 
-    // One-time completion at 80% of gated progress
-    const [lockedComplete, setLockedComplete] = React.useState(false);
+    // Latch completion once we're 80% through the gated scroll progress.
     React.useEffect(() => {
         if (!lockedComplete && started && gatedProgress >= 0.8) setLockedComplete(true);
     }, [gatedProgress, started, lockedComplete]);
@@ -239,11 +181,13 @@ export default function TimelineTitle({
         [gatedProgress, totalChars, lockedComplete]
     );
 
-    const typedChars = useChasingTypewriter(
+    const animatedTyped = useChasingTypewriter(
         targetChars,
         typingMsPerChar,
         lockedComplete ? totalChars : undefined
     );
+    // Reduced motion: jump straight to the fully-typed title, no animation.
+    const typedChars = reducedMotion ? totalChars : animatedTyped;
 
     const visible = React.useMemo(() => {
         let remaining = typedChars;
@@ -254,19 +198,46 @@ export default function TimelineTitle({
         });
     }, [typedChars, lines]);
 
-    const allDone = lockedComplete && typedChars === totalChars;
+    const allDone = reducedMotion || (lockedComplete && typedChars === totalChars);
 
-    const computedHeight = typeof height === 'number' ? `${height}px` : height;
-
-    // Shared CSS variables - horizontal line ALWAYS at 50%, title positioned relative to it
+    // Shared CSS variables. Bounded Journey: the line + title sit at a compact,
+    // constant lead-in from the top (not 50% of a tall box), so the gap matches
+    // the other title sections regardless of line count. The section is fully
+    // content-driven (the legacy fixed `height` prop has been removed).
     const wrapperStyle: React.CSSProperties & {
         ['--tt-scale']: string;
-        ['--tt-left']: string;
+        ['--tt-right']: string;
+        ['--tt-spine-x']: string;
+        ['--tt-lead']: string;
+        ['--tt-gap']: string;
+        ['--tt-trail']: string;
         ['--tt-under']: string;
     } = {
         ['--tt-scale']: String(scale),
-        ['--tt-left']: `${leftOffsetPx}px`,
-        ['--tt-under']: `calc(50% + ${underOffsetPx}px)`,
+        // Fluid RIGHT offset (mirrored journey — the line descends the right side).
+        // clamp floors at gutter, caps at rem; tracks the same vw so it stays glued
+        // to the spine on resize. No-op at 1440.
+        ['--tt-right']: `clamp(var(--gutter), ${rightOffsetPx / 14.4}vw, ${rightOffsetPx / 16}rem)`,
+        // The vertical spine's x-position, mirroring 00_LineAnchor's uiScale exactly
+        // (100px * min(innerWidth/1440, rootFont/16), clamped [0.18,1.6]). In CSS:
+        // 100*widthScale = 100vw/14.4 = 6.944vw; 100*fontScale = 6.25rem. So the
+        // anchor sits at clamp(18px, min(6.944vw, 6.25rem), 160px) from the edge.
+        ['--tt-spine-x']: 'clamp(18px, min(6.944vw, 6.25rem), 160px)',
+        // lead-in (space above the line) — compact, the gap from the previous section
+        ['--tt-lead']: 'clamp(140px, 26vh, 300px)',
+        // line-to-title gap == the title's RIGHT inset (spine→title), so the top and
+        // right distances stay equal and both scale with width. = 100px at 1440 (no-op).
+        ['--tt-gap']: 'calc(var(--tt-right) - var(--tt-spine-x))',
+        // trailing below the title: title-bottom → graph-crossing distance equals
+        // --tt-gap (the same gap as crossing → title-top above), so the title sits
+        // symmetrically between the two horizontal runs. 25px = the graph's
+        // HORIZONTAL_LINE_Y (its crossing sits 25px below the section top); 8px =
+        // optical correction for the font's descender space below the last line
+        // (geometric equality read ~8px looser below). reserveBelowPx must be 0
+        // for the equality to hold (see page.tsx).
+        ['--tt-trail']: 'max(0px, calc(var(--tt-gap) - 25px - 8px))',
+        // title top / under-anchor point
+        ['--tt-under']: 'calc(var(--tt-lead) + var(--tt-gap))',
     };
 
     return (
@@ -274,7 +245,7 @@ export default function TimelineTitle({
             <div
                 ref={ref}
                 className={clsx('tt-wrap', className)}
-                style={{ ...wrapperStyle, height: computedHeight, marginBottom: reserveBelowPx }}
+                style={{ ...wrapperStyle, marginBottom: reserveBelowPx }}
                 aria-hidden="true"
             >
                 <style>{styles}</style>
@@ -286,30 +257,32 @@ export default function TimelineTitle({
                     </>
                 )}
 
-                {/* Anchors: horizontal line ALWAYS at 50% (top-1/2) */}
+                {/* Anchors — MIRRORED journey (section reorder): the line now arrives from
+                    Projects on the LEFT, crosses L→R above the title, and descends the
+                    RIGHT side into the graph. Title alignment is deliberately untouched. */}
                 {showAnchors && (
                     <div className="pointer-events-none absolute inset-0 z-[5]">
-                        <div className="absolute right-0 top-[12px]">
-                            <LineAnchor id="tt-start-right-top" position="right" offsetX={100} />
+                        <div className="absolute left-0 top-[12px]">
+                            <LineAnchor id="tt-start-left-top" position="left" offsetX={100} />
                         </div>
-                        {/* Middle horizontal line - FIXED at 50% */}
-                        <div className="absolute right-0 top-1/2 w-0">
-                            <LineAnchor id="tt-middle-right" position="right" offsetX={100} />
-                        </div>
-                        <div className="absolute left-0 top-1/2 w-0">
+                        {/* Middle horizontal line - rides the title's lead-in (Bounded Journey) */}
+                        <div className="absolute left-0 w-0" style={{ top: 'var(--tt-lead)' }}>
                             <LineAnchor id="tt-middle-left" position="left" offsetX={100} />
                         </div>
-                        {/* Under anchor - positioned relative to 50% */}
-                        <div className="absolute left-0 w-0" style={{ top: 'var(--tt-under)' }}>
-                            <LineAnchor id="tt-under-left" position="left" offsetX={100} />
+                        <div className="absolute right-0 w-0" style={{ top: 'var(--tt-lead)' }}>
+                            <LineAnchor id="tt-middle-right" position="right" offsetX={100} />
                         </div>
-                        <div className="absolute left-0 bottom-[12px]">
-                            <LineAnchor id="tt-bottom-left" position="left" offsetX={100} />
+                        {/* Under anchor - at the title top (lead + gap), on the descending side */}
+                        <div className="absolute right-0 w-0" style={{ top: 'var(--tt-under)' }}>
+                            <LineAnchor id="tt-under-right" position="right" offsetX={100} />
+                        </div>
+                        <div className="absolute right-0 bottom-[12px]">
+                            <LineAnchor id="tt-bottom-right" position="right" offsetX={100} />
                         </div>
                     </div>
                 )}
 
-                {/* Title (top positioned via calc(50% + offset)) */}
+                {/* Title — in normal flow (Bounded Journey), offset left by --tt-left */}
                 <h1 className="tt-title">
                     {/* Line 1 */}
                     <span className="tt-line">
@@ -363,16 +336,11 @@ export default function TimelineTitle({
                                     )}
                             </React.Fragment>
                         ))}
-                        {/* Final cursor animation when done */}
-                        {allDone && <span className="tt-cur tt-cur--done" />}
+                        {/* Final cursor animation when done (skipped under reduced motion) */}
+                        {allDone && !reducedMotion && <span className="tt-cur tt-cur--done" />}
                     </span>
                 </h1>
             </div>
-
-            {/* OPTIONAL: mute the timeline's top rule if it still peeks under the title */}
-            <style jsx global>{`
-                /* .tl-line--top { display: none !important; } */
-            `}</style>
         </>
     );
 }

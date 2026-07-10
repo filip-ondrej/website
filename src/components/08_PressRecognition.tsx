@@ -82,15 +82,28 @@ export default function Recognition() {
         return () => window.removeEventListener('resize', onR);
     }, []);
 
-    // Responsive insets using fluid calculation
-    const INSET = Math.max(20, Math.min(vw * 0.08, 100));
+    // Content cage inset. Track the spine's linear scale (offsetX 100 @ 1440 →
+    // 100/1440 = 0.0694vw) instead of 0.08vw so the content edge moves WITH the
+    // spine at every width instead of only matching near 1440. Mirror the gutter
+    // token's clamp [2rem, …, 6.25rem] in px (root font-size is fluid: 16px@1440,
+    // clamped [11,22]) so the edge aligns to var(--gutter). No-op @1440: rem=16 →
+    // floor 32, cap 100; spine term 0.0694*1440=100 → min(100,100)=100. (was: max(20, min(vw*0.08, 100))=100)
+    const fluidRem = Math.min(22, Math.max(11, (0.25 * 16) + 0.833 * (vw / 100)));
+    const INSET = Math.min(6.25 * fluidRem, Math.max(2 * fluidRem, vw * (100 / 1440)));
 
-    const NAV_SIZE = vw <= 640 ? 28 : 32;
-    const HEADER_PAD = vw <= 640 ? 8 : 12;
+    // NAV_SIZE / HEADER_PAD drove the vertical cage anchor (TOP_Y) via a hard
+    // 640px step that made the cage top + bottom line-anchors JUMP. Make them a
+    // single continuous linear scale off the spine factor. No-op @1440: factor=1
+    // → NAV_SIZE=32, HEADER_PAD=12. (was: vw<=640 ? 28/8 : 32/12)
+    const uiScale = Math.min(1.6, Math.max(0.18, vw / 1440));
+    const NAV_SIZE = 32 * uiScale;
+    const HEADER_PAD = 12 * uiScale;
 
     // cage constants
     const TOP_Y = NAV_SIZE + HEADER_PAD * 2;
-    const EXTRA_BOTTOM_SPACE = vw <= 640 ? 100 : 200;
+    // Continuous instead of a 640px step that snapped svgHeight + under-right
+    // anchor. No-op @1440: 200*1=200. (was: vw<=640 ? 100 : 200)
+    const EXTRA_BOTTOM_SPACE = 200 * uiScale;
     const MID_RATIO = 0.5;
     const CAP_OFFSET = TOP_Y;
 
@@ -109,7 +122,11 @@ export default function Recognition() {
     /* ---------------------------------
        card size + dynamic frame height
     --------------------------------- */
-    const CARD_SCALE = vw <= 640 ? 0.96 : 0.92;
+    // Continuous instead of a 640px step that snapped card width / side gap.
+    // Eased between the wide value (0.92) and the small-screen value (0.96) over
+    // the 640→360 band. No-op @1440: factor clamps to 1 → 0.92. (was: vw<=640 ? 0.96 : 0.92)
+    const cardScaleT = Math.min(1, Math.max(0, (640 - vw) / (640 - 360)));
+    const CARD_SCALE = 0.92 + 0.04 * cardScaleT;
     const cardOuterW = frameWidth * CARD_SCALE;
     const sideGap = (frameWidth - cardOuterW) / 2;
     const cardOffsetX = sideGap;
@@ -133,17 +150,40 @@ export default function Recognition() {
     --------------------------------- */
     const total = VIDEOS.length;
     const [currentSlide, setCurrentSlide] = React.useState(0);
-    const [prevSlide, setPrevSlide] = React.useState(0);
 
-    const prev = () => {
-        setPrevSlide(currentSlide);
-        setCurrentSlide((i) => (i === 0 ? total - 1 : i - 1));
-    };
+    // Gate the track's slide transition: OFF for the first paint so the carousel is
+    // placed instantly at its correct position (no animating-into-place from the
+    // half-settled initial geometry), then ON so user navigation still glides.
+    const [animateTrack, setAnimateTrack] = React.useState(false);
+    React.useEffect(() => {
+        const id = requestAnimationFrame(() => setAnimateTrack(true));
+        return () => cancelAnimationFrame(id);
+    }, []);
 
-    const next = () => {
-        setPrevSlide(currentSlide);
-        setCurrentSlide((i) => (i === total - 1 ? 0 : i + 1));
-    };
+    // Mount the five looping card players only once the section is within one
+    // viewport of view (loading speed: 5 Vimeo boots on page load for a section
+    // several viewports down). One-shot. Combined with animateTrack this also
+    // guarantees the iframes mount into settled geometry (the half-frame-shift fix).
+    const sectionElRef = React.useRef<HTMLElement | null>(null);
+    const [playersReady, setPlayersReady] = React.useState(false);
+    React.useEffect(() => {
+        const el = sectionElRef.current;
+        if (!el) return;
+        const io = new IntersectionObserver(
+            (entries) => {
+                if (entries[0]?.isIntersecting) {
+                    setPlayersReady(true);
+                    io.disconnect();
+                }
+            },
+            { rootMargin: '100% 0px' }
+        );
+        io.observe(el);
+        return () => io.disconnect();
+    }, []);
+
+    const prev = () => setCurrentSlide((i) => (i === 0 ? total - 1 : i - 1));
+    const next = () => setCurrentSlide((i) => (i === total - 1 ? 0 : i + 1));
 
     /* ---------------------------------
        header band geometry
@@ -168,11 +208,28 @@ export default function Recognition() {
     React.useLayoutEffect(() => {
         const el = mainCardRef.current;
         if (!el) return;
-        const rect = el.getBoundingClientRect();
-        const h = rect.height;
-        setMeasuredCardH((prev) =>
-            prev === null || Math.abs(prev - h) > 2 ? h : prev,
-        );
+        // Measure now AND keep measuring via a ResizeObserver, so the card height
+        // self-corrects as the card finishes laying out (font swap, Vimeo iframe,
+        // loader clearing). Previously this was a one-shot read: if it ran before the
+        // card settled, the geometry stayed wrong until a slide change re-ran it —
+        // which is why navigating "reset" the layout.
+        const measure = () => {
+            const h = el.getBoundingClientRect().height;
+            setMeasuredCardH((prev) => {
+                if (prev !== null && Math.abs(prev - h) <= 2) return prev;
+                // The cage-bottom line anchors ride yBottom, which is derived from this
+                // measurement. Nudge the anchor re-measure path directly (rAF = after
+                // React commits the new layout) instead of relying only on the global
+                // document-height observer — the indirect path sometimes left the
+                // spine's horizontal run floating off the cage line.
+                requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+                return h;
+            });
+        };
+        measure();
+        const ro = new ResizeObserver(measure);
+        ro.observe(el);
+        return () => ro.disconnect();
     }, [currentSlide, vw]);
 
     /* ---------------------------------
@@ -186,13 +243,31 @@ export default function Recognition() {
         React.useState<string | null>(null);
     const fullscreenIframeRef = React.useRef<HTMLIFrameElement | null>(null);
     const backdropRef = React.useRef<HTMLDivElement | null>(null);
+    const closeBtnRef = React.useRef<HTMLButtonElement | null>(null);
 
     React.useEffect(() => {
         if (!isFullscreen) return;
 
-        const handleEsc = (e: KeyboardEvent) => {
+        const handleKeydown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
                 setIsFullscreen(false);
+                return;
+            }
+            // Focus trap: keep Tab cycling inside the dialog.
+            if (e.key === 'Tab' && backdropRef.current) {
+                const focusables = backdropRef.current.querySelectorAll<HTMLElement>(
+                    'button, [href], iframe, [tabindex]:not([tabindex="-1"])'
+                );
+                if (focusables.length === 0) return;
+                const first = focusables[0];
+                const last = focusables[focusables.length - 1];
+                if (e.shiftKey && document.activeElement === first) {
+                    e.preventDefault();
+                    last.focus();
+                } else if (!e.shiftKey && document.activeElement === last) {
+                    e.preventDefault();
+                    first.focus();
+                }
             }
         };
 
@@ -201,6 +276,10 @@ export default function Recognition() {
         document.body.style.position = 'fixed';
         document.body.style.top = `-${scrollY}px`;
         document.body.style.width = '100%';
+
+        // A11y: remember what was focused, then move focus into the dialog.
+        const previouslyFocused = document.activeElement as HTMLElement | null;
+        requestAnimationFrame(() => closeBtnRef.current?.focus());
 
         // Setup Vimeo listener for video end AND fullscreen changes
         const setupVimeoListener = () => {
@@ -233,10 +312,13 @@ export default function Recognition() {
             setupVimeoListener();
         }
 
-        document.addEventListener('keydown', handleEsc);
+        document.addEventListener('keydown', handleKeydown);
 
         return () => {
-            document.removeEventListener('keydown', handleEsc);
+            document.removeEventListener('keydown', handleKeydown);
+
+            // Return focus to whatever opened the modal.
+            previouslyFocused?.focus();
 
             // Reset styles
             document.body.style.position = '';
@@ -270,7 +352,7 @@ export default function Recognition() {
 
     return (
         <>
-            <section className="recog-wrap">
+            <section className="recog-wrap" ref={sectionElRef}>
                 {/* LINE ANCHORS OVERLAY */}
                 <div className="pointer-events-none absolute inset-0 z-[25]">
                     {/* small top-left anchor */}
@@ -461,6 +543,12 @@ export default function Recognition() {
                             width: trackW,
                             height: '100%',
                             transform: `translateX(-${trackTranslateX}px)`,
+                            // Only animate once mounted (see animateTrack) so the initial
+                            // placement is instant and correct, not eased-in from a half-
+                            // settled position.
+                            transition: animateTrack
+                                ? 'transform 1.4s cubic-bezier(0.16, 1, 0.3, 1)'
+                                : 'none',
                         }}
                     >
                         {VIDEOS.map((vid, rawIndex) => {
@@ -538,9 +626,14 @@ export default function Recognition() {
                                         <h3 className="cardTitle">{vid.title}</h3>
                                     </div>
 
-                                    {/* VIDEO VISUAL – looping Vimeo */}
+                                    {/* VIDEO VISUAL – looping Vimeo. Mount the iframes only
+                                        once the section's geometry is real (animateTrack turns
+                                        true one frame after mount): an iframe created during the
+                                        vw=0 first render makes the Vimeo player initialize
+                                        against a half-settled box and it doesn't self-correct —
+                                        the video content rendered shifted by ~half the frame. */}
                                     <div className="videoVisual">
-                                        {vimeoId && (
+                                        {animateTrack && playersReady && vimeoId && (
                                             <iframe
                                                 title={`${vid.title} background`}
                                                 src={`https://player.vimeo.com/video/${vimeoId}?background=1&autoplay=1&loop=1&autopause=0&muted=1`}
@@ -752,7 +845,8 @@ export default function Recognition() {
                         left: 0;
                         top: 0;
                         display: block;
-                        transition: transform 1.4s cubic-bezier(0.16, 1, 0.3, 1);
+                        /* transition is set inline (gated by animateTrack) so it's off on
+                           first paint and on for user navigation. */
                         will-change: transform;
                         pointer-events: auto;
                     }
@@ -918,6 +1012,9 @@ export default function Recognition() {
                 <div
                     ref={backdropRef}
                     className="fullscreenModal"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="Recognition video"
                     style={{
                         position: 'fixed',
                         inset: 0,
@@ -936,8 +1033,12 @@ export default function Recognition() {
                     <div className="lightbox-container">
                         <div
                             style={{
-                                width: '90vw',
-                                maxWidth: '1600px',
+                                /* Fit BOTH dimensions (matches PromoVideo): cap the width by
+                                   height too so the 16:9 video never exceeds the viewport on
+                                   short/wide screens. Before, a bare 90vw width let the 16:9
+                                   box overflow vertically — the video looked zoomed/cropped
+                                   and pushed the close button off-screen. */
+                                width: 'min(90vw, calc(90vh * 16 / 9), 1600px)',
                                 aspectRatio: '16 / 9',
                             }}
                         >
@@ -955,16 +1056,19 @@ export default function Recognition() {
                                 }}
                             />
                         </div>
-
-                        <button
-                            className="recogCloseBtn"
-                            onClick={() => setIsFullscreen(false)}
-                            aria-label="Close"
-                        >
-                            <span className="recogCloseLine" />
-                            <span className="recogCloseLine" />
-                        </button>
                     </div>
+
+                    {/* Close button — sibling of the (scaled) lightbox so it anchors to the
+                        screen corner and is always reachable regardless of the video size. */}
+                    <button
+                        ref={closeBtnRef}
+                        className="recogCloseBtn"
+                        onClick={() => setIsFullscreen(false)}
+                        aria-label="Close"
+                    >
+                        <span className="recogCloseLine" />
+                        <span className="recogCloseLine" />
+                    </button>
 
                     <style jsx>{`
                         .lightbox-container {
@@ -975,9 +1079,12 @@ export default function Recognition() {
                         }
 
                         .recogCloseBtn {
+                            /* Screen-corner anchored (the modal is fixed inset:0), so it's
+                               always on-screen and independent of the video's size. */
                             position: absolute;
-                            top: -50px;
-                            right: -50px;
+                            top: 20px;
+                            right: 20px;
+                            z-index: 1;
                             width: 44px;
                             height: 44px;
                             background: rgba(0, 0, 0, 0.7);
@@ -1018,19 +1125,12 @@ export default function Recognition() {
                             }
                         }
 
-                        @media (max-width: 1024px) {
-                            .recogCloseBtn {
-                                top: 20px;
-                                right: 20px;
-                            }
-                        }
-
                         @media (max-width: 768px) {
                             .recogCloseBtn {
-                                top: 10px !important;
-                                right: 10px !important;
-                                width: 40px !important;
-                                height: 40px !important;
+                                top: 12px;
+                                right: 12px;
+                                width: 40px;
+                                height: 40px;
                             }
                         }
                     `}</style>
@@ -1040,12 +1140,16 @@ export default function Recognition() {
     );
 }
 
-/* Vimeo typings */
+/* Vimeo typings — MUST match the identical global augmentation in 02_PromoVideo.tsx
+   (both files declare `Window.Vimeo`; divergent shapes triggered TS2717). Includes
+   pause/play even though this file only uses `on`, so the two declarations merge. */
 declare global {
     interface Window {
         Vimeo?: {
             Player: new (iframe: HTMLIFrameElement) => {
                 on: (event: string, callback: (data: { fullscreen: boolean }) => void) => void;
+                pause: () => void;
+                play: () => void;
             };
         };
     }

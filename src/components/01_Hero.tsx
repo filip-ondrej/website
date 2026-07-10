@@ -14,16 +14,19 @@ type HeroProps = {
     parallaxMaxShiftPx?: number;
 };
 
+// WebP emitted by scripts/optimize-images.mjs (npm run img) from the PNG
+// sources — 106KB vs 4.8MB each. Keep this list in sync with the loader's
+// CRITICAL_IMAGES in 00_LoadingAnimation.tsx.
 const DEFAULT_IMAGES: [string, string, string, string] = [
-    '/images/filip-layer-1.png',
-    '/images/filip-layer-2.png',
-    '/images/filip-layer-3.png',
-    '/images/filip-layer-4.png',
+    '/images/filip-layer-1.webp',
+    '/images/filip-layer-2.webp',
+    '/images/filip-layer-3.webp',
+    '/images/filip-layer-4.webp',
 ];
 
 export default function Hero({
-                                 title = `I TURN 'IMPOSSIBLE' INTO 'DONE'`,
-                                 subtitle = `Filip Ondrej - 10 years competing at robotic World Cups. Now building companies that scale.`,
+                                 title = `ARE YOU ALSO THINKING ABOUT ROBOTS?`,
+                                 subtitle = `Filip Ondrej — 10 years winning robotics World Championships. The trophies were practice. The company is the point.`,
                                  images = DEFAULT_IMAGES,
                                  className,
                                  aspectRatio = '16 / 9',
@@ -54,14 +57,25 @@ export default function Hero({
 
         const multipliers = [0, 0.4, 0.9, 1.25];
         let lastScroll = -1;
+        let lastScrollY = -1;
 
         const tick = () => {
             if (!isInViewRef.current) return;
 
+            // Cheap gate first: if the page didn't scroll, skip the frame WITHOUT
+            // touching getBoundingClientRect — that call forces a layout flush and
+            // this loop was paying it 60×/s while the hero sat idle in view.
+            const y = window.scrollY;
+            if (y === lastScrollY) {
+                rafRef.current = requestAnimationFrame(tick);
+                return;
+            }
+            lastScrollY = y;
+
             const rect = el.getBoundingClientRect();
             const scrollProgress = Math.min(1, Math.max(0, -rect.top / rect.height));
 
-            // Skip if no change
+            // Skip if no meaningful change
             if (Math.abs(scrollProgress - lastScroll) < 0.005) {
                 rafRef.current = requestAnimationFrame(tick);
                 return;
@@ -88,7 +102,7 @@ export default function Hero({
 
             // Bottom fade – start earlier, independent of container zoom
             const FADE_START = 0.05;   // when the fade should begin (0 = immediately)
-            const FADE_END = 0.35;    // how far into the scroll it should be fully opaque
+            const FADE_END = 0.3;    // how far into the scroll it should be fully opaque
             const fadeProgress = Math.min(
                 1,
                 Math.max(0, (scrollProgress - FADE_START) / (FADE_END - FADE_START))
@@ -121,9 +135,8 @@ export default function Hero({
     return (
         <section
             ref={sectionRef}
-            className={['relative w-screen overflow-hidden', className ?? ''].join(' ')}
+            className={['hero-section relative w-screen overflow-hidden', className ?? ''].join(' ')}
             style={{
-                aspectRatio,
                 isolation: 'isolate',
                 backgroundColor: 'var(--color-bg, #0b0b0d)',
             }}
@@ -166,6 +179,17 @@ export default function Hero({
                             quality={95}
                             style={{
                                 objectFit: fit,
+                                /* Pin the artwork's bottom to the box bottom so the
+                                   meaningful lower portion always stays in view and
+                                   any cropping eats the black top first. */
+                                objectPosition: 'center bottom',
+                                /* Modest bottom-anchored zoom to crop the black top
+                                   quarter on screens where the image otherwise fits
+                                   exactly. Dial 1.12 up for less black / down for more.
+                                   Independent of the parallax (parent) + scroll-zoom
+                                   (container) transforms, so it doesn't fight them. */
+                                transform: 'scale(1.12)',
+                                transformOrigin: 'center bottom',
                                 opacity: 1 - (i * 0.2),
                                 pointerEvents: 'none',
                             }}
@@ -190,12 +214,7 @@ export default function Hero({
 
             {/* Title block */}
             <div
-                className="pointer-events-none absolute z-30"
-                style={{
-                    left: '200px',
-                    bottom: '300px',
-                    maxWidth: '1200px',
-                }}
+                className="hero-copy pointer-events-none absolute z-30"
             >
                 <div
                     className="subtitleSize"
@@ -221,10 +240,13 @@ export default function Hero({
                     aria-label={title}
                 >
           <span className="titleLine titleSize" style={{ display: 'block' }}>
-            I TURN &apos;IMPOSSIBLE&apos;
+            ARE YOU ALSO
           </span>
                     <span className="titleLine titleSize" style={{ display: 'block' }}>
-            INTO &apos;DONE&apos;
+            THINKING ABOUT
+          </span>
+                    <span className="titleLine titleSize" style={{ display: 'block' }}>
+            <span className="hero-gold">ROBOTS?</span>
           </span>
                 </h1>
 
@@ -235,30 +257,75 @@ export default function Hero({
                             marginTop: 'var(--space-sm)',
                             color: 'var(--color-muted)',
                             textShadow: '0 1px 12px rgba(0,0,0,0.4)',
-                            maxWidth: '800px',
+                            maxWidth: '50rem',
                         }}
                     >
-                        Filip Ondrej - 10 years competing at robotic World Cups.<br />
-                        Now building companies that scale.
+                        Filip Ondrej — 10 years winning robotics World Championships.<br />
+                        The trophies were practice. The company is the point.
                     </p>
                 )}
             </div>
 
             <style jsx>{`
-        .titleSize { 
-          font-size: clamp(68px, 6.6vw, 92px); 
+        /* Landscape: fill the viewport height so the artwork bottom meets the
+           screen bottom. svh accounts for mobile browser chrome. */
+        .hero-section {
+          height: 100svh;
         }
-        .subtitleSize { 
-          font-size: clamp(16px, 2.1vw, 22px); 
+        /* Portrait: a tall narrow box would force the 16:9 art to overflow
+           sideways (cover scales on height). Size by aspect ratio instead so
+           the whole picture stays visible by width. */
+        @media (orientation: portrait) {
+          .hero-section {
+            height: auto;
+            aspect-ratio: 16 / 9;
+          }
         }
 
-        @media (max-width: 768px) {
-          div[style*="left: 200px"] {
-            left: 20px !important;
-          }
-          div[style*="bottom: 300px"] {
-            bottom: 100px !important;
-          }
+        /* Title block anchored in rem so it rides the fluid scale engine
+           (1rem scales with the viewport). Was left:200px / bottom:300px. */
+        .hero-copy {
+          /* Continuous: tracks ~2x the spine (spine ~6.94vw, title ~13.9vw),
+             floored at the gutter and capped at 12.5rem (== 200px @ 1440). No
+             breakpoint step, so it never jumps relative to the spine. */
+          left: clamp(var(--gutter), 13.9vw, 12.5rem);
+          /* Middle-left: span the full height and center the copy with flex —
+             NO transform, so the type stays crisp (translateY(-50%) can land on a
+             half-pixel and blur it). */
+          top: 0;
+          bottom: 0;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          align-items: flex-start;
+          /* Right edge lands on the gutter regardless of the fluid left. */
+          max-width: calc(100vw - clamp(var(--gutter), 13.9vw, 12.5rem) - var(--gutter));
+        }
+        /* Pure rem so both sizes ride the fluid root font as ONE unit (per the
+           globals scale engine) instead of each running its own vw clamp. The
+           old clamp(px, vw, px) form gave the title and subtitle different
+           lock-in points, so on the way down one would freeze while the other
+           kept shrinking — the staggered, non-uniform scaling. Magnitudes are
+           the originals at 1440 (root = 16px): 92px and 22px. No-op at 1440. */
+        .titleSize {
+          font-size: 5.6rem;   /* 5.75rem is 92px @1440 */
+        }
+        .subtitleSize {
+          font-size: 1.375rem;  /* 22px @1440 */
+        }
+
+        /* Gold accent on the punchline word ("ROBOTS?"). */
+        .hero-gold {
+          background: linear-gradient(135deg, #FEF3C7 0%, #FDE047 25%, #FFD60A 50%, #F59E0B 75%, #B45309 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+        }
+
+        /* XXS phones: shrink the title below its desktop floor so the long
+           headline fits the gutter-constrained width. */
+        @media (max-width: 480px) {
+          .titleSize { font-size: clamp(22px, 8vw, 44px); }
         }
 
         @media (prefers-reduced-motion: reduce) {

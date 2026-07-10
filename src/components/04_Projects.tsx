@@ -2,16 +2,13 @@
 
 import React from 'react';
 import { LineAnchor } from '@/components/00_LineAnchor';
+import ProjectModal, { type ProjectModalData } from '@/components/ProjectModal';
 
-/* ---------- Local project data ---------- */
-type ProjectItem = {
-    id: string;
-    title: string;
-    year?: number;
-    blurb: string;
-    images: string[];
-    tags?: string[];
-};
+/* ---------- Local project data ----------
+   ProjectItem is the modal's data shape: id/title/year/blurb/images/tags drive the card,
+   plus the OPTIONAL rich fields (hook, overview, challenge, outcome, metrics, story,
+   takeaway, videos, documents) that light up the detail modal as they're filled in. */
+type ProjectItem = ProjectModalData;
 
 const PROJECTS: ProjectItem[] = [
     {
@@ -70,8 +67,10 @@ const PROJECTS: ProjectItem[] = [
 
 export default function Projects() {
     const sectionRef = React.useRef<HTMLElement | null>(null);
-    const backdropRef = React.useRef<HTMLDivElement | null>(null);
-    const [lightboxSrc, setLightboxSrc] = React.useState<string | null>(null);
+    // Clicking a card opens its detail modal (the "project story"), replacing the old
+    // image-zoom lightbox. The modal opens on whichever image the card was showing.
+    const [modalProject, setModalProject] = React.useState<ProjectItem | null>(null);
+    const [modalStartIndex, setModalStartIndex] = React.useState(0);
     const [currentImageIndex, setCurrentImageIndex] = React.useState<Record<string, number>>(
         PROJECTS.reduce((acc, p) => ({ ...acc, [p.id]: 0 }), {})
     );
@@ -88,18 +87,10 @@ export default function Projects() {
         return () => io.disconnect();
     }, []);
 
-    React.useEffect(() => {
-        if (!lightboxSrc) return;
-        const handleEsc = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') setLightboxSrc(null);
-        };
-        document.addEventListener('keydown', handleEsc);
-        document.body.style.overflow = 'hidden';
-        return () => {
-            document.removeEventListener('keydown', handleEsc);
-            document.body.style.overflow = 'unset';
-        };
-    }, [lightboxSrc]);
+    const openModal = (project: ProjectItem, startIndex: number) => {
+        setModalStartIndex(startIndex);
+        setModalProject(project);
+    };
 
     const handlePrevImage = (projectId: string, e: React.MouseEvent) => {
         e.preventDefault();
@@ -138,7 +129,7 @@ export default function Projects() {
                     const showArrows = p.images.length > 1;
 
                     return (
-                        <article key={p.id} className="proj-card" style={{ animationDelay: `${i * 90}ms` }}>
+                        <article key={p.id} className="proj-card">
                             <div className="caption">
                                 <span className="index">[{String(i + 1).padStart(2, '0')}]</span>
                                 <span className="dot" />
@@ -148,21 +139,33 @@ export default function Projects() {
                             <h3 className="p-title">{p.title}</h3>
 
                             <div className="visual-container">
-                                {/* Main clickable image area */}
+                                {/* Main clickable image area — opens the project detail modal.
+                                    Images are stacked and cross-faded (opacity) so switching
+                                    carousel images is a soft dissolve, not a hard cut. */}
                                 <div
                                     className="image-clickable-area"
-                                    onClick={() => setLightboxSrc(p.images[currentImg])}
+                                    onClick={() => openModal(p, currentImg)}
                                     role="button"
                                     tabIndex={0}
                                     onKeyDown={(e) => {
                                         if (e.key === 'Enter' || e.key === ' ') {
                                             e.preventDefault();
-                                            setLightboxSrc(p.images[currentImg]);
+                                            openModal(p, currentImg);
                                         }
                                     }}
-                                    aria-label={`View ${p.title} image fullscreen`}
+                                    aria-label={`Open ${p.title} details`}
                                 >
-                                    <img src={p.images[currentImg]} alt={`${p.title} - Image ${currentImg + 1}`} />
+                                    {p.images.map((src, idx) => (
+                                        <img
+                                            key={src}
+                                            src={src}
+                                            alt={`${p.title} - Image ${idx + 1}`}
+                                            className={idx === currentImg ? 'active' : ''}
+                                            loading="lazy"
+                                            decoding="async"
+                                            aria-hidden={idx === currentImg ? undefined : true}
+                                        />
+                                    ))}
                                 </div>
 
                                 {/* Arrow navigation overlay */}
@@ -245,28 +248,13 @@ export default function Projects() {
                 <LineAnchor id="projects-bottom" position="left" offsetX={100} />
             </div>
 
-            {/* Premium Lightbox */}
-            {lightboxSrc && (
-                <div
-                    ref={backdropRef}
-                    className="lightbox-backdrop"
-                    onClick={(e) => e.target === backdropRef.current && setLightboxSrc(null)}
-                    role="dialog"
-                    aria-modal="true"
-                >
-                    <div className="lightbox-container">
-                        <img className="lightbox-image" src={lightboxSrc} alt="Project detail" />
-                        <button
-                            className="lightbox-close"
-                            onClick={() => setLightboxSrc(null)}
-                            aria-label="Close"
-                        >
-                            <span className="close-line" />
-                            <span className="close-line" />
-                        </button>
-                    </div>
-                </div>
-            )}
+            {/* Project detail modal (story-style, same family as the timeline/collab modals) */}
+            <ProjectModal
+                data={modalProject}
+                isOpen={modalProject !== null}
+                onClose={() => setModalProject(null)}
+                startIndex={modalStartIndex}
+            />
 
             <style jsx>{`
                 .projects {
@@ -279,8 +267,13 @@ export default function Projects() {
                 .grid {
                     width: 100%;
                     margin: 0;
-                    padding-left: clamp(16px, 12.5vw, 200px);
-                    padding-right: clamp(16px, 12.5vw, 200px);
+                    /* Content inset MIRRORS the title's --pt-left exactly (13.889vw == 200px
+                       at 1440, floored at var(--gutter), capped at 12.5rem) so the cards
+                       left-align with the title above and scale with the spine identically.
+                       Was 12.5vw (== 180px @1440), which left the cards only 80px from the
+                       spine while the title sits 100px off it — the misalignment is now gone. */
+                    padding-left: clamp(var(--gutter), 13.889vw, 12.5rem);
+                    padding-right: clamp(var(--gutter), 13.889vw, 12.5rem);
                     display: grid;
                     grid-template-columns: repeat(auto-fit, minmax(min(100%, 500px), 1fr));
                     gap: clamp(24px, 3.125vw, 65px);
@@ -358,7 +351,8 @@ export default function Projects() {
 
                 .index,
                 .year {
-                    font: 600 11px/1 'Rajdhani', monospace;
+                    /* 0.6875rem == 11px at 1440; scales with the fluid root (was fixed px). */
+                    font: 600 0.6875rem/1 'Rajdhani', monospace;
                     letter-spacing: 0.16em;
                     color: rgba(255, 255, 255, 0.56);
                     text-transform: uppercase;
@@ -372,7 +366,10 @@ export default function Projects() {
                 }
 
                 .p-title {
-                    font: 800 clamp(17px, 2.4vw, 22px) / 1.15 'Rajdhani', monospace;
+                    /* rem so the card heading rides the fluid root font like the rest of
+                       the site (raw vw pinned it at 22px across all desktop widths — frozen,
+                       not fluid). 1.375rem == 22px at 1440 (no-op there); bounds are safety. */
+                    font: 800 clamp(16px, 1.375rem, 22px) / 1.15 'Rajdhani', monospace;
                     color: #fff;
                     margin: 10px 14px 8px 14px;
                     letter-spacing: 0.01em;
@@ -390,16 +387,31 @@ export default function Projects() {
                 .image-clickable-area {
                     position: absolute;
                     inset: 0;
-                    cursor: zoom-in;
+                    cursor: pointer;
                     z-index: 1;
                 }
 
+                /* Keyboard focus ring — a soft white inset glow instead of the default
+                   browser outline (consistent with the site's no-default-box preference). */
+                .image-clickable-area:focus-visible {
+                    outline: none;
+                    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.85);
+                }
+
+                /* Stacked + cross-faded carousel images (was a single hard-swapped img). */
                 .image-clickable-area img {
+                    position: absolute;
+                    inset: 0;
                     width: 100%;
                     height: 100%;
                     object-fit: cover;
                     display: block;
-                    transition: opacity 0.3s ease;
+                    opacity: 0;
+                    transition: opacity 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+                }
+
+                .image-clickable-area img.active {
+                    opacity: 1;
                 }
 
                 /* ARROWS */
@@ -423,21 +435,28 @@ export default function Projects() {
                 .nav-prev {
                     left: 0;
                     justify-content: flex-start;
-                    padding-left: 18px;
+                    /* 18px @1440 → fluid (1.25vw == 18px), capped at rem so look holds */
+                    padding-left: clamp(12px, 1.25vw, 1.125rem);
                 }
 
                 .nav-next {
                     right: 0;
                     justify-content: flex-end;
-                    padding-right: 18px;
+                    padding-right: clamp(12px, 1.25vw, 1.125rem);
                 }
 
-                .visual-container:hover .nav-arrow {
+                /* Reveal on hover, or when a control inside is focused BY KEYBOARD only
+                   (:has(:focus-visible), not :focus-within — the latter stayed true after a
+                   mouse click left a button focused, so the arrows lingered after mouse-out). */
+                .visual-container:hover .nav-arrow,
+                .visual-container:has(:focus-visible) .nav-arrow {
                     opacity: 1;
                 }
 
-                .nav-arrow:hover {
+                .nav-arrow:hover,
+                .nav-arrow:focus-visible {
                     color: rgba(255, 255, 255, 0.95);
+                    outline: none;
                 }
 
                 .nav-arrow:active {
@@ -477,7 +496,8 @@ export default function Projects() {
                     transition: opacity 0.3s ease;
                 }
 
-                .visual-container:hover .image-dots {
+                .visual-container:hover .image-dots,
+                .visual-container:has(:focus-visible) .image-dots {
                     opacity: 1;
                 }
 
@@ -489,8 +509,10 @@ export default function Projects() {
                     transition: transform 0.3s ease;
                 }
 
-                .dot-indicator:hover {
+                .dot-indicator:hover,
+                .dot-indicator:focus-visible {
                     transform: translateY(-2px);
+                    outline: none;
                 }
 
                 .dot-inner {
@@ -510,14 +532,16 @@ export default function Projects() {
                     transform: scale(1.2);
                 }
 
-                .dot-indicator:hover .dot-inner {
+                .dot-indicator:hover .dot-inner,
+                .dot-indicator:focus-visible .dot-inner {
                     background: rgba(255, 255, 255, 0.4);
                     border-color: rgba(255, 255, 255, 0.6);
                 }
 
                 .blurb {
                     padding: 12px 14px 0;
-                    font: 400 15px/1.6 'Rajdhani', monospace;
+                    /* 0.9375rem == 15px at 1440; scales with the fluid root (was fixed px). */
+                    font: 400 0.9375rem/1.6 'Rajdhani', monospace;
                     color: rgba(255, 255, 255, 0.84);
                     margin: 0;
                     flex: 1;
@@ -547,113 +571,11 @@ export default function Projects() {
                     border-color: rgba(255, 255, 255, 0.3);
                 }
 
-                /* LIGHTBOX */
-                .lightbox-backdrop {
-                    position: fixed;
-                    inset: 0;
-                    z-index: 9999;
-                    background: rgba(0, 0, 0, 0.95);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    backdrop-filter: blur(10px);
-                    animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-                }
-
-                @keyframes fadeIn {
-                    from {
-                        opacity: 0;
-                    }
-                    to {
-                        opacity: 1;
-                    }
-                }
-
-                .lightbox-container {
-                    position: relative;
-                    max-width: 90vw;
-                    max-height: 90vh;
-                    animation: scaleIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-                }
-
-                @keyframes scaleIn {
-                    from {
-                        opacity: 0;
-                        transform: scale(0.95);
-                    }
-                    to {
-                        opacity: 1;
-                    }
-                }
-
-                .lightbox-image {
-                    max-width: 100%;
-                    max-height: 90vh;
-                    width: auto;
-                    height: auto;
-                    object-fit: contain;
-                    border: 1px solid rgba(255, 255, 255, 0.15);
-                    box-shadow: 0 50px 100px rgba(0, 0, 0, 0.8);
-                }
-
-                .lightbox-close {
-                    position: absolute;
-                    top: -50px;
-                    right: -50px;
-                    width: 44px;
-                    height: 44px;
-                    background: rgba(0, 0, 0, 0.7);
-                    border: 1px solid rgba(255, 255, 255, 0.2);
-                    cursor: pointer;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    transition: all 0.3s cubic-bezier(0.23, 1, 0.32, 1);
-                    backdrop-filter: blur(10px);
-                }
-
-                .lightbox-close:hover {
-                    background: rgba(0, 0, 0, 0.9);
-                    border-color: rgba(255, 255, 255, 0.5);
-                    transform: rotate(90deg);
-                }
-
-                .close-line {
-                    position: absolute;
-                    width: 20px;
-                    height: 2px;
-                    background: rgba(255, 255, 255, 0.9);
-                    transition: background 0.3s ease;
-                }
-
-                .lightbox-close:hover .close-line {
-                    background: #ffffff;
-                }
-
-                .close-line:first-child {
-                    transform: rotate(45deg);
-                }
-
-                .close-line:last-child {
-                    transform: rotate(-45deg);
-                }
-
-                /* TABLET - still 2 columns */
-                @media (max-width: 1024px) {
-                    .lightbox-close {
-                        top: 20px;
-                        right: 20px;
-                    }
-                }
-
                 /* MOBILE - 1 column */
                 @media (max-width: 768px) {
-                    .grid {
-                        padding-left: clamp(16px, 5vw, 40px);
-                        padding-right: clamp(16px, 5vw, 40px);
-                        gap: clamp(24px, 4vw, 40px);
-                    }
-
+                    /* Grid padding intentionally NOT overridden here:
+                       the gutter-floored clamp above stays continuous with the spine
+                       (removed step that jumped padding to 5vw/16px). */
                     .nav-arrow {
                         opacity: 1;
                         width: 60px;
@@ -665,25 +587,15 @@ export default function Projects() {
                 }
 
                 @media (max-width: 640px) {
-                    .grid {
-                        padding-left: 16px;
-                        padding-right: 16px;
-                    }
-
                     .proj-card:active {
                         transform: scale(0.98);
                     }
+                }
 
-                    .lightbox-close {
-                        top: 10px;
-                        right: 10px;
-                        width: 40px;
-                        height: 40px;
-                    }
-
-                    .lightbox-image {
-                        max-width: 95vw;
-                        max-height: 85vh;
+                /* Heading overflow floor on very small screens (no layout change). */
+                @media (max-width: 480px) {
+                    .p-title {
+                        font-size: clamp(15px, 5vw, 19px);
                     }
                 }
 

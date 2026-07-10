@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, Fragment } from 'react';
 import { generateDynamicPath } from '@/lib/00_generateDynamicPath';
 import { linePathConfig } from '@/data/00_linePathConfig';
 
@@ -349,7 +349,6 @@ function getLastAnchorAndBottomTail(
 
 // ====== COMPONENT ======
 export function ProgressLine() {
-    const [, setViewportPos] = useState(0);
     const [tipY, setTipY] = useState(0);
     const [runtime, setRuntime] = useState<BubbleRuntimeState>({
         bubble: null,
@@ -406,6 +405,69 @@ export function ProgressLine() {
         };
     }, [rebuildAll]);
 
+    // ---- RE-MEASURE ON ANY LAYOUT SETTLE (not just window resize) ----
+    // Each LineAnchor captures its Y on mount / +50ms / resize only, so any layout
+    // shift after that — web-font swap, images decoding, the fluid timeline height
+    // settling, the loader dismissing — moves content while the spine keeps the
+    // stale positions, leaving it misaligned (running long, cutting through the next
+    // title) until the user happens to resize. We watch the document height and, on a
+    // real change, nudge the same 'resize' path every anchor + this component already
+    // listen to, so the spine self-heals the moment the page settles.
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+
+        let raf = 0;
+        let lastW = window.innerWidth;
+        let lastH = document.documentElement.scrollHeight;
+
+        const nudge = () => {
+            cancelAnimationFrame(raf);
+            raf = requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+        };
+
+        // Re-measure on ANY viewport-geometry change — WIDTH as well as height. Height
+        // catches late layout shifts (font swap, images, fluid heights settling); WIDTH
+        // catches window maximize/restore and — critically — browser zoom, which changes
+        // the root element's CSS-pixel width but in several browsers does NOT fire a
+        // window 'resize' event. Without the width check the CSS content rescaled while
+        // the JS-measured spine kept stale anchor positions until a manual drag.
+        // The delta guard ignores sub-pixel noise and prevents ResizeObserver feedback
+        // loops (re-measuring is read-only; the absolutely-positioned spine SVG doesn't
+        // change the root/body box).
+        const check = () => {
+            const w = window.innerWidth;
+            const h = document.documentElement.scrollHeight;
+            if (Math.abs(w - lastW) < 1 && Math.abs(h - lastH) < 1) return;
+            lastW = w;
+            lastH = h;
+            nudge();
+        };
+        const ro = new ResizeObserver(check);
+        ro.observe(document.body);
+        ro.observe(document.documentElement);   // its CSS-px width shrinks on zoom
+
+        // Pinch / browser zoom mutates the visual viewport without always firing a
+        // window 'resize'; listen to it directly as a second safety net.
+        const vv = window.visualViewport;
+        vv?.addEventListener('resize', nudge);
+
+        // Web-font swap is the most common late shift; re-measure once it's ready.
+        if (document.fonts?.ready) {
+            document.fonts.ready.then(nudge).catch(() => {});
+        }
+
+        // Backstop after all images/resources have loaded.
+        const onLoad = () => nudge();
+        window.addEventListener('load', onLoad);
+
+        return () => {
+            cancelAnimationFrame(raf);
+            ro.disconnect();
+            vv?.removeEventListener('resize', nudge);
+            window.removeEventListener('load', onLoad);
+        };
+    }, []);
+
     // ---- SCROLL + RAF LOOP (original behavior + bubble slowdown, no smoothing) ----
     useEffect(() => {
         let rafId: number;
@@ -434,6 +496,12 @@ export function ProgressLine() {
         };
 
         const handleWheel = (e: WheelEvent) => {
+            // Yield to any full-screen overlay: while a scroll lock is active (see
+            // useScrollLock) we do NOT hijack the wheel, so the overlay scrolls natively.
+            // This replaces the old per-modal stopPropagation guards — new overlays get
+            // correct scrolling for free just by locking.
+            if (document.documentElement.hasAttribute('data-scroll-locked')) return;
+
             e.preventDefault();
 
             const vh = window.innerHeight;
@@ -445,7 +513,15 @@ export function ProgressLine() {
             const tipBefore = currPageY + vh * vpPosNow;
 
             const state = getBubbleRuntimeState(tipBefore, bubblesRef.current);
-            setRuntime(state);
+            // Same identity-preserving commit as the rAF loop (a new object per
+            // wheel event forced a spine re-render on every wheel tick).
+            setRuntime((prev) =>
+                prev.bubble === state.bubble &&
+                prev.isActive === state.isActive &&
+                prev.scrollMult === state.scrollMult
+                    ? prev
+                    : state
+            );
 
             // clamp delta a bit so we don't jump crazy amounts
             const rawDelta = e.deltaY;
@@ -464,9 +540,19 @@ export function ProgressLine() {
                 wheelScrollingRef.current = false;
                 return;
             }
+            // While the collaborations rail is armed (data-rail-hijack), NO
+            // outside scroll may move the page: Chrome can deliver non-cancelable
+            // wheel events during aggressive gestures (preventDefault is ignored,
+            // one native step slips through) — snap straight back instead.
+            if (document.documentElement.hasAttribute('data-rail-hijack')) {
+                window.scrollTo(0, pageScrollRef.current);
+                return;
+            }
             const current = window.scrollY || window.pageYOffset || 0;
             pageScrollRef.current = current;
         };
+
+        let lastCommittedTip = -1;
 
         const raf = (ts: number) => {
             if (lastTsRef.current === null) lastTsRef.current = ts;
@@ -476,18 +562,28 @@ export function ProgressLine() {
             const vh = window.innerHeight;
 
             const vpPosNow = computeViewportPos(pageY);
-            setViewportPos(vpPosNow);
-
             const tipNow = pageY + vh * vpPosNow;
-            setTipY(tipNow);
 
-            // Expose tip for other sections (like the tunnel)
-            if (typeof window !== 'undefined') {
+            // Commit state ONLY when the tip actually moved. Without this gate the
+            // loop re-rendered the entire spine SVG through React at 60fps even
+            // while the page sat idle — in dev mode that alone reads as scroll lag.
+            if (Math.abs(tipNow - lastCommittedTip) >= 0.1) {
+                lastCommittedTip = tipNow;
+                setTipY(tipNow);
+
+                // Expose tip for other sections (like the tunnel)
                 window.progressTipY = tipNow;
-            }
 
-            const st = getBubbleRuntimeState(tipNow, bubblesRef.current);
-            setRuntime(st);
+                const st = getBubbleRuntimeState(tipNow, bubblesRef.current);
+                // Keep object identity when nothing changed so React can skip.
+                setRuntime((prev) =>
+                    prev.bubble === st.bubble &&
+                    prev.isActive === st.isActive &&
+                    prev.scrollMult === st.scrollMult
+                        ? prev
+                        : st
+                );
+            }
 
             rafId = requestAnimationFrame(raf);
         };
@@ -530,6 +626,27 @@ export function ProgressLine() {
 
     // --- Bottom tail ---
     const { tailFrom, tailTo } = getLastAnchorAndBottomTail(anchors);
+
+    // --- Portal fades ---
+    // At each designed gap in the journey (the tunnel portals) the line must
+    // never show its rounded cap — that "pencil end" kills the going-through-
+    // the-tunnel illusion. Instead the last ~14px of the segment ENTERING a
+    // portal dissolve to transparent inside the mouth, and the first ~14px of
+    // the segment EMERGING below fade back in. Gaps are detected generically:
+    // consecutive config segments whose to/from anchors differ.
+    const PORTAL_FADE = 14;
+    const portalFades = new Map<number, { x: number; y: number; dir: 'out' | 'in' }>();
+    for (let i = 0; i < linePathConfig.length - 1; i++) {
+        const seg = linePathConfig[i];
+        const next = linePathConfig[i + 1];
+        if (seg.to === next.from) continue;
+        const endA = anchors[seg.to];
+        const startA = anchors[next.from];
+        if (endA) portalFades.set(i, { x: endA.x, y: endA.y, dir: 'out' });
+        if (startA) portalFades.set(i + 1, { x: startA.x, y: startA.y, dir: 'in' });
+    }
+    const segStroke = (i: number, base: 'static' | 'active', color: string) =>
+        portalFades.has(i) ? `url(#portal-fade-${base}-${i})` : color;
 
     const lastSegIndex = linePathConfig.length - 1;
     function lastSegmentIsDone(): boolean {
@@ -598,16 +715,49 @@ export function ProgressLine() {
         introDashoffset = stubLen * (1 - stubProgClamped);
     }
 
-    const svgHeight = document.documentElement.scrollHeight;
-
     return (
         <svg
             className="absolute top-0 left-0 w-full pointer-events-none"
             style={{
-                height: `${svgHeight}px`,
+                // 100% of the (position:relative) body — NOT an explicit px
+                // scrollHeight. The px version was self-referential: after the
+                // viewport shrank and content got shorter, the too-tall SVG itself
+                // held document.scrollHeight at the old value (a ratchet), so the
+                // baseline/tail kept drawing far past the footer's end and the page
+                // scrolled into empty space until a hard reload.
+                height: '100%',
                 zIndex: 50,
             }}
         >
+            {/* Portal-fade gradients (userSpace so they pin to the anchor coords) */}
+            <defs>
+                {[...portalFades.entries()].map(([segIdx, f]) => {
+                    const y1 = f.dir === 'out' ? f.y - PORTAL_FADE : f.y;
+                    const y2 = f.dir === 'out' ? f.y : f.y + PORTAL_FADE;
+                    const [o1, o2] = f.dir === 'out' ? [1, 0] : [0, 1];
+                    return (
+                        <Fragment key={`pf-${segIdx}`}>
+                            <linearGradient
+                                id={`portal-fade-static-${segIdx}`}
+                                gradientUnits="userSpaceOnUse"
+                                x1={f.x} y1={y1} x2={f.x} y2={y2}
+                            >
+                                <stop offset="0" stopColor={STATIC_LINE_COLOR} stopOpacity={o1} />
+                                <stop offset="1" stopColor={STATIC_LINE_COLOR} stopOpacity={o2} />
+                            </linearGradient>
+                            <linearGradient
+                                id={`portal-fade-active-${segIdx}`}
+                                gradientUnits="userSpaceOnUse"
+                                x1={f.x} y1={y1} x2={f.x} y2={y2}
+                            >
+                                <stop offset="0" stopColor={ACTIVE_LINE_COLOR} stopOpacity={o1} />
+                                <stop offset="1" stopColor={ACTIVE_LINE_COLOR} stopOpacity={o2} />
+                            </linearGradient>
+                        </Fragment>
+                    );
+                })}
+            </defs>
+
             {/* 1. Intro stub baseline */}
             {introFrom && introTo && (
                 <path
@@ -645,7 +795,7 @@ export function ProgressLine() {
                         key={`baseline-${i}`}
                         d={`M ${fromA.x} ${fromA.y} L ${toA.x} ${toA.y}`}
                         fill="none"
-                        stroke={STATIC_LINE_COLOR}
+                        stroke={segStroke(i, 'static', STATIC_LINE_COLOR)}
                         strokeWidth={STATIC_LINE_WIDTH}
                         strokeLinecap="round"
                         strokeLinejoin="round"
@@ -737,7 +887,7 @@ export function ProgressLine() {
                         key={`active-${index}`}
                         d={`M ${fromA.x} ${fromA.y} L ${toA.x} ${toA.y}`}
                         fill="none"
-                        stroke={ACTIVE_LINE_COLOR}
+                        stroke={segStroke(index, 'active', ACTIVE_LINE_COLOR)}
                         strokeWidth={ACTIVE_LINE_WIDTH}
                         strokeLinecap="round"
                         strokeLinejoin="round"

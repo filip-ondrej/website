@@ -6,11 +6,9 @@ import { LineAnchor } from '@/components/00_LineAnchor';
 
 export type ProjectTitleProps = {
     lines?: string[];
-    height?: number | string;     // section height
     className?: string;
     scale?: number;               // font size multiplier
     leftOffsetPx?: number;        // horizontal offset of the title
-    underOffsetPx?: number;       // px below middle for the “under” point
     reserveBelowPx?: number;      // spacing below the title block
     showAnchors?: boolean;
     debugGuides?: boolean;
@@ -21,22 +19,22 @@ const styles = `
 .pt-wrap {
   position: relative;
   width: 100%;
-  height: 100%;
   container-type: inline-size;
   isolation: isolate;
   z-index: 1;
+  display: flex;
+  flex-direction: column;
+  padding-top: calc(var(--pt-lead) + var(--pt-gap));
+  padding-bottom: var(--pt-trail);
 }
 
-/* Title block: positioned using top (calc from 50% + offset) */
+/* Title block — normal flow, offset left by --pt-left */
 .pt-title {
-  position: absolute;
-  top: var(--pt-under);
-  left: var(--pt-left);
-  margin: 0;
+  position: relative;
+  margin: 0 0 0 var(--pt-left);
 
   display: flex;
   flex-direction: column;
-  justify-content: center;
   gap: 0.04em;
 
   font-family: var(--font-sans, Rajdhani), monospace;
@@ -47,9 +45,8 @@ const styles = `
   font-weight: 900;
   pointer-events: none;
 
-  --pt-scale: 0.8;
-  --pt-left: 200px;
-  /* SAME SIZE AS TIMELINETITLE */
+  /* --pt-scale and --pt-left are set inline on .pt-wrap from the scale and
+     leftOffsetPx props (prop-driven, no-op at the 1440 reference). */
   --pt-size: calc(var(--pt-scale) * clamp(64px, 8.4cqi, 160px));
 }
 @supports not (font-size: 1cqi) {
@@ -104,12 +101,10 @@ const styles = `
 
 export default function ProjectTitle({
                                          lines = ['The Projects That', 'Won World Cups'],
-                                         height = 'clamp(600px, 80vh, 1000px)',   // section height (change here if needed)
                                          className,
-                                         scale = 1,
+                                         scale = 0.785,
                                          leftOffsetPx = 200,
-                                         underOffsetPx = 100,
-                                         reserveBelowPx = 96,
+                                         reserveBelowPx = 30,
                                          showAnchors = true,
                                          debugGuides = false,
                                      }: ProjectTitleProps) {
@@ -136,8 +131,6 @@ export default function ProjectTitle({
         return () => io.disconnect();
     }, []);
 
-    const computedHeight = typeof height === 'number' ? `${height}px` : height;
-
     // Split lines into words for the slide-up animation
     const allLines = React.useMemo(
         () => lines.map((line) => line.split(' ').filter(Boolean)),
@@ -148,11 +141,24 @@ export default function ProjectTitle({
     const wrapperStyle: React.CSSProperties & {
         ['--pt-scale']: string;
         ['--pt-left']: string;
+        ['--pt-spine-x']: string;
+        ['--pt-lead']: string;
+        ['--pt-gap']: string;
+        ['--pt-trail']: string;
         ['--pt-under']: string;
     } = {
         ['--pt-scale']: String(scale),
-        ['--pt-left']: `${leftOffsetPx}px`,
-        ['--pt-under']: `calc(50% + ${underOffsetPx}px)`,
+        // Fluid offset (see --pt-left in styles): floors at gutter, caps at rem, tracks vw
+        // so it stays aligned to the spine on resize. No-op at 1440.
+        ['--pt-left']: `clamp(var(--gutter), ${leftOffsetPx / 14.4}vw, ${leftOffsetPx / 16}rem)`,
+        // The vertical spine's x-position, mirroring 00_LineAnchor's uiScale exactly.
+        ['--pt-spine-x']: 'clamp(18px, min(6.944vw, 6.25rem), 160px)',
+        ['--pt-lead']: 'clamp(140px, 26vh, 300px)',
+        // line→title gap == the title's LEFT inset (spine→title), so top & left stay
+        // equal and both scale with width. = 100px at 1440 (no-op).
+        ['--pt-gap']: 'calc(var(--pt-left) - var(--pt-spine-x))',
+        ['--pt-trail']: 'clamp(20px, 4vh, 50px)',
+        ['--pt-under']: 'calc(var(--pt-lead) + var(--pt-gap))',
     };
 
     return (
@@ -160,7 +166,7 @@ export default function ProjectTitle({
             <div
                 ref={ref}
                 className={clsx('pt-wrap', className)}
-                style={{ ...wrapperStyle, height: computedHeight, marginBottom: reserveBelowPx }}
+                style={{ ...wrapperStyle, marginBottom: reserveBelowPx }}
                 aria-hidden="true"
             >
                 <style>{styles}</style>
@@ -177,10 +183,10 @@ export default function ProjectTitle({
                         <div className="absolute right-0 top-[12px]">
                             <LineAnchor id="pt-start-right-top" position="right" offsetX={100} />
                         </div>
-                        <div className="absolute right-0 top-1/2 w-0">
+                        <div className="absolute right-0 w-0" style={{ top: 'var(--pt-lead)' }}>
                             <LineAnchor id="pt-middle-right" position="right" offsetX={100} />
                         </div>
-                        <div className="absolute left-0 top-1/2 w-0">
+                        <div className="absolute left-0 w-0" style={{ top: 'var(--pt-lead)' }}>
                             <LineAnchor id="pt-middle-left" position="left" offsetX={100} />
                         </div>
                         <div className="absolute left-0 w-0" style={{ top: 'var(--pt-under)' }}>
@@ -219,10 +225,6 @@ export default function ProjectTitle({
                     ))}
                 </h1>
             </div>
-
-            <style jsx global>{`
-                /* .tl-line--top { display: none !important; } */
-            `}</style>
         </>
     );
 }
