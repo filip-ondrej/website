@@ -355,11 +355,6 @@ const styles = `
   display: flex;
   align-items: flex-start;
   justify-content: flex-start;  /* everything starts from the left */
-  /* Inset from the vertical spine (which runs at the content's left edge after
-     the journey mirror) == the 1.25rem gap between the horizontal run and the
-     controls' top — so the info button sits equidistant from the line on its
-     top AND left. Legend keeps its own right inset (margin-right below). */
-  padding-left: 1.25rem;
   gap: 16px;
   /* Wrap instead of overflowing/clipping (tl-wrap has overflow-x:hidden) when
      the toggle + 8-item legend can't share one line at mid widths. A no-op at
@@ -1651,18 +1646,10 @@ export default function ProgressTimeline({
             {Array.from({ length: 6 }).map((_, i) => (
                 <line key={`lvl-${i}`} x1={0} x2={FIXED_TOTAL_WIDTH} y1={yOf(i)} y2={yOf(i)} className="tl-tick" />
             ))}
-            {/* Level numbers + axis caption live on the RIGHT — the mirrored spine
-                (descent + knee) now occupies the left edge and crowded them out. */}
             {Array.from({ length: 6 }).map((_, i) => (
-                <text
-                    key={`lvl-label-${i}`}
-                    x={FIXED_TOTAL_WIDTH - 2}
-                    y={yOf(i) - 3}
-                    style={{ textAnchor: 'end' }}
-                    className="tl-level-label"
-                >{i}</text>
+                <text key={`lvl-label-${i}`} x={2} y={yOf(i) - 3} className="tl-level-label">{i}</text>
             ))}
-            <g transform={`translate(${FIXED_TOTAL_WIDTH + 10}, ${((yTop5 + yBottom) / 2) - 6})`}>
+            <g transform={`translate(-10, ${((yTop5 + yBottom) / 2) - 6})`}>
                 <text transform="rotate(-90)" textAnchor="middle" className="tl-y-axis-caption">
                     PROGRESS LEVEL
                 </text>
@@ -1953,32 +1940,26 @@ export default function ProgressTimeline({
                 aria-label="Progress timeline"
             >
                 {/* Animated LineAnchor path overlay (high z-index so it sits above the chart).
-                    MIRRORED journey (section reorder): the line arrives from TimelineTitle on
-                    the RIGHT, crosses R→L above the chart, and descends the LEFT side (knee +
-                    exit) toward Collaborations. Chart internals are untouched. */}
+                    The line arrives from TimelineTitle on the LEFT, crosses L→R above the
+                    chart, and descends the RIGHT side (knee + exit) toward ProjectTitle.
+                    Chart internals are untouched. */}
                 <div className="pointer-events-none absolute inset-0 z-[100]">
                     {/* Top entry */}
-                    <div className="absolute right-0 top-[20px]">
-                        <LineAnchor id="timeline-top" position="right" offsetX={100} />
+                    <div className="absolute left-0 top-[20px]">
+                        <LineAnchor id="timeline-top" position="left" offsetX={100} />
                     </div>
 
                     {/* Horizontal run */}
-                    <div className="absolute right-0 w-0" style={{ top: `${HORIZONTAL_LINE_Y}px` }}>
-                        <LineAnchor id="timeline-right" position="right" offsetX={100} />
-                    </div>
                     <div className="absolute left-0 w-0" style={{ top: `${HORIZONTAL_LINE_Y}px` }}>
                         <LineAnchor id="timeline-left" position="left" offsetX={100} />
                     </div>
-
-                    {/* Knee — proportional to the (fluid) height so it stays glued to the
-                        descent at ~46% of the chart (= 300px below the run at the 650 reference). */}
-                    <div className="absolute left-0 w-0" style={{ top: `${HORIZONTAL_LINE_Y + Math.round(height * (300 / 650))}px` }}>
-                        <LineAnchor id="timeline-below" position="left" offsetX={100} />
+                    <div className="absolute right-0 w-0" style={{ top: `${HORIZONTAL_LINE_Y}px` }}>
+                        <LineAnchor id="timeline-right" position="right" offsetX={100} />
                     </div>
 
                     {/* Bottom exit */}
-                    <div className="absolute left-0 bottom-[40px]">
-                        <LineAnchor id="timeline-bottom" position="left" offsetX={100} />
+                    <div className="absolute right-0 bottom-[40px]">
+                        <LineAnchor id="timeline-bottom" position="right" offsetX={100} />
                     </div>
                 </div>
 

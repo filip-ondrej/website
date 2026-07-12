@@ -9,7 +9,7 @@ type TitleHeaderProps = {
     lines?: string[];
     className?: string;
     scale?: number;               // font size multiplier
-    rightOffsetPx?: number;       // horizontal offset of the title from the RIGHT edge
+    leftOffsetPx?: number;        // horizontal offset of the title from the LEFT edge
     reserveBelowPx?: number;      // real spacing below the title section to separate timeline (default 96)
     showAnchors?: boolean;
     debugGuides?: boolean;
@@ -38,17 +38,17 @@ const styles = `
   padding-bottom: var(--tt-trail);
 }
 
-/* Title block: in normal flow, RIGHT-aligned — the mirrored journey descends
-   the right side, and the title hugs the line with the same inset law the
-   other titles use (offset from the spine == the line→title gap). */
+/* Title block: in normal flow, LEFT-aligned — the journey descends the left
+   side, and the title hugs the line with the same inset law the other titles
+   use (offset from the spine == the line→title gap). */
 .tt-title {
   position: relative;
-  margin: 0 var(--tt-right) 0 auto;
-  text-align: right;
+  margin: 0 auto 0 var(--tt-left);
+  text-align: left;
 
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 0.04em;
 
   font-family: var(--font-sans, Rajdhani), monospace;
@@ -59,8 +59,8 @@ const styles = `
   font-weight: 900;
   pointer-events: none;
 
-  /* --tt-scale and --tt-right are set inline on .tt-wrap from the scale and
-     rightOffsetPx props (prop-driven, fluid, no-op at the 1440 reference). They
+  /* --tt-scale and --tt-left are set inline on .tt-wrap from the scale and
+     leftOffsetPx props (prop-driven, fluid, no-op at the 1440 reference). They
      used to be hardcoded here, which silently overrode the props — removed. */
   --tt-size: calc(var(--tt-scale) * clamp(64px, 8.4cqi, 160px));
 }
@@ -84,9 +84,8 @@ const styles = `
 .tt-ch--v { opacity:1; }
 
 /* Cursor takes ZERO net layout width (margin-right compensates width+gap):
-   it overhangs after the last typed char instead of widening the line. With
-   the right-aligned title, an in-flow cursor made whichever line carried it
-   7px wider — so the lines' right edges never matched. */
+   it overhangs after the last typed char instead of widening the line, so
+   line widths stay identical whether or not they carry the cursor. */
 .tt-cur { display:inline-block; width:3px; height:0.9em; background: rgba(255,255,255,0.9); margin-left:4px; margin-right:-7px; vertical-align:middle; opacity:0; }
 .tt-cur--typing { opacity:1; animation:none; }
 .tt-cur--paused { opacity:1; animation: ttBlink .8s step-end infinite; }
@@ -109,7 +108,7 @@ export default function TimelineTitle({
                                           lines = ['Every Lesson.', 'Every Pivot.', 'Every Win.'],
                                           className,
                                           scale = 0.785,
-                                          rightOffsetPx = 200,
+                                          leftOffsetPx = 200,
                                           reserveBelowPx = 96,
                                           showAnchors = true,
                                           debugGuides = false,
@@ -206,7 +205,7 @@ export default function TimelineTitle({
     // content-driven (the legacy fixed `height` prop has been removed).
     const wrapperStyle: React.CSSProperties & {
         ['--tt-scale']: string;
-        ['--tt-right']: string;
+        ['--tt-left']: string;
         ['--tt-spine-x']: string;
         ['--tt-lead']: string;
         ['--tt-gap']: string;
@@ -214,10 +213,10 @@ export default function TimelineTitle({
         ['--tt-under']: string;
     } = {
         ['--tt-scale']: String(scale),
-        // Fluid RIGHT offset (mirrored journey — the line descends the right side).
-        // clamp floors at gutter, caps at rem; tracks the same vw so it stays glued
-        // to the spine on resize. No-op at 1440.
-        ['--tt-right']: `clamp(var(--gutter), ${rightOffsetPx / 14.4}vw, ${rightOffsetPx / 16}rem)`,
+        // Fluid LEFT offset (the line descends the left side). clamp floors at
+        // gutter, caps at rem; tracks the same vw so it stays glued to the spine
+        // on resize. No-op at 1440.
+        ['--tt-left']: `clamp(var(--gutter), ${leftOffsetPx / 14.4}vw, ${leftOffsetPx / 16}rem)`,
         // The vertical spine's x-position, mirroring 00_LineAnchor's uiScale exactly
         // (100px * min(innerWidth/1440, rootFont/16), clamped [0.18,1.6]). In CSS:
         // 100*widthScale = 100vw/14.4 = 6.944vw; 100*fontScale = 6.25rem. So the
@@ -225,9 +224,9 @@ export default function TimelineTitle({
         ['--tt-spine-x']: 'clamp(18px, min(6.944vw, 6.25rem), 160px)',
         // lead-in (space above the line) — compact, the gap from the previous section
         ['--tt-lead']: 'clamp(140px, 26vh, 300px)',
-        // line-to-title gap == the title's RIGHT inset (spine→title), so the top and
-        // right distances stay equal and both scale with width. = 100px at 1440 (no-op).
-        ['--tt-gap']: 'calc(var(--tt-right) - var(--tt-spine-x))',
+        // line-to-title gap == the title's LEFT inset (spine→title), so the top and
+        // left distances stay equal and both scale with width. = 100px at 1440 (no-op).
+        ['--tt-gap']: 'calc(var(--tt-left) - var(--tt-spine-x))',
         // trailing below the title: title-bottom → graph-crossing distance equals
         // --tt-gap (the same gap as crossing → title-top above), so the title sits
         // symmetrically between the two horizontal runs. 25px = the graph's
@@ -257,27 +256,26 @@ export default function TimelineTitle({
                     </>
                 )}
 
-                {/* Anchors — MIRRORED journey (section reorder): the line now arrives from
-                    Projects on the LEFT, crosses L→R above the title, and descends the
-                    RIGHT side into the graph. Title alignment is deliberately untouched. */}
+                {/* Anchors — the line arrives from PromoVideo on the RIGHT, crosses R→L
+                    above the title, and descends the LEFT side into the graph. */}
                 {showAnchors && (
                     <div className="pointer-events-none absolute inset-0 z-[5]">
-                        <div className="absolute left-0 top-[12px]">
-                            <LineAnchor id="tt-start-left-top" position="left" offsetX={100} />
+                        <div className="absolute right-0 top-[12px]">
+                            <LineAnchor id="tt-start-right-top" position="right" offsetX={100} />
                         </div>
                         {/* Middle horizontal line - rides the title's lead-in (Bounded Journey) */}
-                        <div className="absolute left-0 w-0" style={{ top: 'var(--tt-lead)' }}>
-                            <LineAnchor id="tt-middle-left" position="left" offsetX={100} />
-                        </div>
                         <div className="absolute right-0 w-0" style={{ top: 'var(--tt-lead)' }}>
                             <LineAnchor id="tt-middle-right" position="right" offsetX={100} />
                         </div>
-                        {/* Under anchor - at the title top (lead + gap), on the descending side */}
-                        <div className="absolute right-0 w-0" style={{ top: 'var(--tt-under)' }}>
-                            <LineAnchor id="tt-under-right" position="right" offsetX={100} />
+                        <div className="absolute left-0 w-0" style={{ top: 'var(--tt-lead)' }}>
+                            <LineAnchor id="tt-middle-left" position="left" offsetX={100} />
                         </div>
-                        <div className="absolute right-0 bottom-[12px]">
-                            <LineAnchor id="tt-bottom-right" position="right" offsetX={100} />
+                        {/* Under anchor - at the title top (lead + gap), on the descending side */}
+                        <div className="absolute left-0 w-0" style={{ top: 'var(--tt-under)' }}>
+                            <LineAnchor id="tt-under-left" position="left" offsetX={100} />
+                        </div>
+                        <div className="absolute left-0 bottom-[12px]">
+                            <LineAnchor id="tt-bottom-left" position="left" offsetX={100} />
                         </div>
                     </div>
                 )}

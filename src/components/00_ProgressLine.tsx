@@ -1,8 +1,14 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback, Fragment } from 'react';
+import { useEffect, useLayoutEffect, useState, useRef, useCallback, Fragment } from 'react';
 import { generateDynamicPath } from '@/lib/00_generateDynamicPath';
 import { linePathConfig } from '@/data/00_linePathConfig';
+
+// useLayoutEffect on the client (re-sync the imperative strokes BEFORE paint, so
+// a rebuild re-render never flashes hidden/stale strokes); useEffect during SSR
+// where layout effects don't exist.
+const useIsomorphicLayoutEffect =
+    typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
 // ====== VISUAL CONFIG ======
 const STATIC_LINE_COLOR = 'rgba(47,47,49)'; // faint baseline
@@ -13,9 +19,66 @@ const ACTIVE_LINE_WIDTH = 4;
 // how far ahead (in px) we reveal the gray baseline
 const BASELINE_REVEAL_AHEAD = 1000;
 
+// Global wheel-scroll speed. 1 = native feel, lower = slower page. Applies on
+// top of the per-bubble slow zones (those multiply this further). Tune live —
+// but beware going far below ~0.75: the page is long and a recruiter on a
+// 90-second budget shouldn't feel like they're wading.
+const WHEEL_SPEED = 0.8;
+
+// Stepped-mouse smoothing. Notched wheels teleport in ~100px quanta ("robotic");
+// instead of applying the step instantly, we glide the page toward the target
+// with this exponential time-constant. Higher = softer/floatier. The page and
+// the line tip stay locked together while gliding (the tip derives from the
+// live position), so this can NEVER reintroduce line-lag. Trackpads are
+// detected (fractional / small deltas) and keep their native instant feel.
+const WHEEL_SMOOTH_TAU_MS = 110;
+// A delta that is fractional or smaller than this marks the device as a
+// trackpad for TRACKPAD_LATCH_MS — smoothing stays off while it's latched.
+const TRACKPAD_DELTA_MAX = 80;
+const TRACKPAD_LATCH_MS = 300;
+
+// ---- Tip-in-viewport mapping ----
+// Where the tip rides in the viewport as you scroll: it ramps 0 → TIP_BAND_TOP
+// over the first TIP_INTRO_VH viewport-heights of scrolling, slides TIP_BAND_TOP
+// → TIP_BAND_BOTTOM linearly through the body of the page, then ramps
+// TIP_BAND_BOTTOM → 1 over the last TIP_OUTRO_VH. The ramps exist so the tip
+// can touch the document's very top and very bottom; inside them it moves
+// faster than the scroll (shorter ramp = faster catch-up sprint).
+// Band top 0.2 keeps the horizontal crossings high in the viewport so the
+// content below them (e.g. the graph) stays fully visible during the slow.
+const TIP_BAND_TOP = 0.25;
+const TIP_BAND_BOTTOM = 0.75;
+const TIP_INTRO_VH = 0.3;
+const TIP_OUTRO_VH = 0.3;
+
+// ---- Slow-zone (bubble) geometry ----
+// Each bubble's sweep "budget" — the px of page drift during which the
+// horizontal finishes drawing — is AUTO-COMPUTED per bubble at rebuild time:
+// exactly the drift needed for the content below the run (drop end +
+// BUBBLE_FIT_MARGIN) to clear the fold by the corner moment, at the CURRENT
+// viewport. This is the conservation law made self-tuning: page descent during
+// the sweep == vertical sync error at the corner, so we spend precisely what
+// the section needs and no more. BUBBLE_MIN_BUDGET keeps a natural drift on
+// crossings whose content already fits (the titles); the half-drop cap
+// protects short drops.
+const BUBBLE_MIN_BUDGET = 50;
+const BUBBLE_FIT_MARGIN = 48;
+// Phase changes are eased over this many px of tip travel (slope-continuous
+// mapping: ramp into the sweep, ease through the corner, ramp out at the drop
+// end). The plateau speeds are SOLVED so the line still advances exactly 1px
+// of path per 1px of wheel input overall, the horizontal still completes
+// exactly at the corner, and the vertical still lands exactly at the drop end.
+const BUBBLE_EASE_RAMP = 30;
+
 // ====== TYPES ======
 type AnchorPoint = { x: number; y: number };
 type AnchorsMap = Record<string, AnchorPoint>;
+
+// One linear-slope piece of a bubble's path-vs-tip mapping. Over tip travel
+// [y0, y1] (local, from bubble start) the draw speed (px of path per px of tip)
+// goes linearly s0 → s1; S0 = total path drawn at y0. Slope-continuity across
+// pieces is what makes the page speed (= input × 1/s) free of steps.
+type SlopePiece = { y0: number; y1: number; s0: number; s1: number; S0: number };
 
 type Bubble = {
     startY: number;
@@ -23,12 +86,46 @@ type Bubble = {
     horizY: number;
     horizWidth: number;
     dropLen: number;
-    bubblePathDistance: number;
-    bubbleMult: number;
+    // px of tip descent allocated to drawing the horizontal (phase 1); the
+    // horizontal completes EXACTLY here (the corner). Auto-computed per bubble
+    // so the content below the run clears the fold by the corner moment.
+    budget: number;
+    // slope-continuous mapping pieces covering [0, dropLen]
+    pieces: SlopePiece[];
     horizontalSegIndex: number;
     postVerticalSegIndex: number;
     maxOwnedIndex: number;
 };
+
+// Draw speed (px path / px tip) at local tip position y.
+function bubbleSlopeAt(bubble: Bubble, y: number): number {
+    const ps = bubble.pieces;
+    for (const p of ps) {
+        if (y <= p.y1 || p === ps[ps.length - 1]) {
+            const span = p.y1 - p.y0;
+            const t = span <= 0 ? 1 : clamp((y - p.y0) / span, 0, 1);
+            return p.s0 + (p.s1 - p.s0) * t;
+        }
+    }
+    return 1;
+}
+
+// Total path drawn (px) after y px of local tip travel — piecewise-quadratic
+// integral of the slope pieces.
+function bubblePathCoveredAt(bubble: Bubble, y: number): number {
+    const ps = bubble.pieces;
+    const last = ps[ps.length - 1];
+    if (y >= last.y1) return last.S0 + ((last.s0 + last.s1) / 2) * (last.y1 - last.y0);
+    for (const p of ps) {
+        if (y <= p.y1 || p === last) {
+            const span = p.y1 - p.y0;
+            const t = span <= 0 ? 0 : clamp((y - p.y0) / span, 0, 1);
+            const sHere = p.s0 + (p.s1 - p.s0) * t;
+            return p.S0 + ((p.s0 + sHere) / 2) * (y - p.y0);
+        }
+    }
+    return 0;
+}
 
 type BubbleRuntimeState = {
     bubble: Bubble | null;
@@ -53,6 +150,29 @@ function dist(a: AnchorPoint, b: AnchorPoint) {
     const dx = b.x - a.x;
     const dy = b.y - a.y;
     return Math.sqrt(dx * dx + dy * dy);
+}
+
+// ---- Tip mapping (module scope: the scroll loop AND computeBubbles use it) ----
+function viewportPosAt(pageY: number, vh: number, docH: number): number {
+    const maxScrollForVP = docH - vh;
+    const introEnd = vh * TIP_INTRO_VH;
+    const normalEnd = maxScrollForVP - vh * TIP_OUTRO_VH;
+
+    let vpPos = 0;
+    if (pageY <= introEnd) {
+        vpPos = (pageY / introEnd) * TIP_BAND_TOP;
+    } else if (pageY <= normalEnd) {
+        const norm = (pageY - introEnd) / (normalEnd - introEnd);
+        vpPos = TIP_BAND_TOP + norm * (TIP_BAND_BOTTOM - TIP_BAND_TOP);
+    } else {
+        const outro = (pageY - normalEnd) / (vh * TIP_OUTRO_VH);
+        vpPos = TIP_BAND_BOTTOM + outro * (1 - TIP_BAND_BOTTOM);
+    }
+    return clamp(vpPos, 0, 1);
+}
+
+function tipAt(pageY: number, vh: number, docH: number): number {
+    return pageY + vh * viewportPosAt(pageY, vh, docH);
 }
 
 function segmentIsWithinRevealRange(
@@ -109,8 +229,46 @@ function computeBubbles(anchors: AnchorsMap | undefined): Bubble[] {
 
         if (postVerticalSegIndex === -1 || dropLen <= 0.5) continue;
 
-        const bubblePathDistance = horizWidth + dropLen;
-        const bubbleMult = bubblePathDistance / dropLen;
+        // ---- auto-budget: exactly the sweep drift this section needs ----
+        // Fit target = the drop's end plus a visual margin; the budget is the
+        // tip travel after which that target sits at the viewport bottom. If
+        // the target already fits when the sweep starts, keep a small natural
+        // drift (min); never let the sweep eat more than half the drop.
+        const vh = window.innerHeight;
+        const docH = document.documentElement.scrollHeight;
+        const fitTarget = horizY + dropLen + BUBBLE_FIT_MARGIN;
+        const pFit = Math.max(0, fitTarget - vh);
+        const budgetNeeded = tipAt(pFit, vh, docH) - horizY;
+        const budget = clamp(budgetNeeded, BUBBLE_MIN_BUDGET, dropLen * 0.5);
+
+        // ---- slope-continuous mapping (see SlopePiece) ----
+        // Plateau speeds are SOLVED so that: path drawn over [0, budget] ==
+        // horizWidth (the corner lands exactly at the corner), path drawn over
+        // [budget, dropLen] == dropLen (the vertical lands exactly at the drop
+        // end), and the slope enters/exits at 1 (no page-speed step against
+        // the free vertical outside the bubble).
+        const B = budget;
+        const D = dropLen;
+        const W = horizWidth;
+        const r = Math.max(0, Math.min(BUBBLE_EASE_RAMP, B / 3, (D - B) / 3));
+        // phase 2: r-wide exit ramp s2→1 ending at D
+        const s2 = Math.max(1, (D - r / 2) / (D - B - r / 2));
+        // phase 1: r-wide entry ramp 1→s1, plateau, r-wide corner ramp s1→s2
+        const s1 = Math.max(s2, (W - (r * (1 + s2)) / 2) / (B - r));
+
+        const pieces: SlopePiece[] = [];
+        let S0 = 0;
+        const pushPiece = (y0: number, y1: number, sa: number, sb: number) => {
+            if (y1 - y0 <= 0) return;
+            pieces.push({ y0, y1, s0: sa, s1: sb, S0 });
+            S0 += ((sa + sb) / 2) * (y1 - y0);
+        };
+        pushPiece(0, r, 1, s1);              // ease into the sweep
+        pushPiece(r, B - r, s1, s1);         // sweep plateau
+        pushPiece(B - r, B, s1, s2);         // ease through the corner
+        pushPiece(B, D - r, s2, s2);         // drop plateau
+        pushPiece(D - r, D, s2, 1);          // ease out at the drop end
+
         const maxOwnedIndex = Math.max(i, postVerticalSegIndex);
 
         bubbles.push({
@@ -119,8 +277,8 @@ function computeBubbles(anchors: AnchorsMap | undefined): Bubble[] {
             horizY,
             horizWidth,
             dropLen,
-            bubblePathDistance,
-            bubbleMult,
+            budget,
+            pieces,
             horizontalSegIndex: i,
             postVerticalSegIndex,
             maxOwnedIndex,
@@ -152,29 +310,26 @@ function getBubbleBySegIndex(segIndex: number, bubbles: Bubble[]): Bubble | null
 
 /**
  * bubblePathProgress
- * Treat horizontal + its drop as one conveyor belt.
+ * Slope-continuous two-phase mapping (see computeBubbles). The horizontal
+ * draws over the first `budget` px of tip descent and completes exactly at
+ * the corner; the vertical then draws near-1:1 and lands exactly at the drop
+ * end. Progress is derived from the integrated slope curve, so there are no
+ * speed steps anywhere — including against the free line outside the bubble.
  */
 function bubblePathProgress(
     bubble: Bubble,
     tipY: number
 ): { horizProg: number; vertProg: number } {
-    const localY = tipY - bubble.startY;
-    const verticalDone = clamp(localY, 0, bubble.dropLen);
-
-    const pathCovered =
-        (verticalDone / bubble.dropLen) * bubble.bubblePathDistance;
-
     const { horizWidth, dropLen } = bubble;
+    const localY = clamp(tipY - bubble.startY, 0, dropLen);
+    const covered = bubblePathCoveredAt(bubble, localY);
 
-    if (pathCovered <= horizWidth || horizWidth === 0) {
-        const horizProg =
-            horizWidth === 0 ? 1 : clamp(pathCovered / horizWidth, 0, 1);
+    if (covered <= horizWidth || horizWidth === 0) {
+        const horizProg = horizWidth === 0 ? 1 : clamp(covered / horizWidth, 0, 1);
         return { horizProg, vertProg: 0 };
-    } else {
-        const afterHoriz = pathCovered - horizWidth;
-        const vertProg = clamp(afterHoriz / dropLen, 0, 1);
-        return { horizProg: 1, vertProg };
     }
+    const vertProg = clamp((covered - horizWidth) / dropLen, 0, 1);
+    return { horizProg: 1, vertProg };
 }
 
 /**
@@ -198,8 +353,12 @@ function getBubbleRuntimeState(
         return { bubble, isActive: false, scrollMult: 1 };
     }
 
-    const baseSlow = 1 / bubble.bubbleMult;
-    const scrollMult = clamp(baseSlow, 0.02, 1);
+    // The page slowdown is the exact reciprocal of the draw speed at this tip
+    // position, so the LINE advances at a constant 1px of path per 1px of
+    // wheel input everywhere — and because the slope curve is continuous, the
+    // page speed has no steps either (it ramps in/out and through the corner).
+    const localY = tipY - bubble.startY;
+    const scrollMult = clamp(1 / bubbleSlopeAt(bubble, localY), 0.02, 1);
 
     return {
         bubble,
@@ -349,12 +508,13 @@ function getLastAnchorAndBottomTail(
 
 // ====== COMPONENT ======
 export function ProgressLine() {
-    const [tipY, setTipY] = useState(0);
-    const [runtime, setRuntime] = useState<BubbleRuntimeState>({
-        bubble: null,
-        isActive: false,
-        scrollMult: 1,
-    });
+    // The tip lives in a REF, not state. Routing it through setState meant React
+    // re-reconciled the whole SVG at least a frame behind the page move, so the
+    // drawn tip trailed the scroll during fast wheeling and visibly "caught up"
+    // on stop. The rAF loop now writes stroke attributes imperatively (see
+    // drawFrame) in the same frame as the scroll — the tip is ALWAYS at the
+    // scroll position. React only re-renders on rebuilds (anchors/resize).
+    const tipYRef = useRef(0);
 
     const [, setPathData] = useState<{
         pathString: string;
@@ -375,12 +535,32 @@ export function ProgressLine() {
         maxY: 0,
     });
 
-    const lastTsRef = useRef<number | null>(null);
     const bubblesRef = useRef<Bubble[]>([]);
 
     // canonical scroll used by wheel handler (with bubble slowdown)
     const pageScrollRef = useRef(0);
-    const wheelScrollingRef = useRef(false);
+    // where the page WANTS to be — ahead of pageScrollRef only while a stepped
+    // mouse wheel is gliding (trackpads apply instantly, keeping both equal)
+    const targetScrollRef = useRef(0);
+    // last time we saw a trackpad-like delta (fractional / small) — while
+    // latched, wheel steps apply instantly with no glide
+    const trackpadTsRef = useRef(0);
+
+    // force one imperative redraw even if the tip didn't move (after rebuilds)
+    const needsRedrawRef = useRef(true);
+
+    // Imperative draw targets, indexed by config segment index. Callback refs
+    // null them on unmount; drawFrame skips null entries.
+    const baselineRefs = useRef<(SVGPathElement | null)[]>([]);
+    const activeRefs = useRef<(SVGPathElement | null)[]>([]);
+    const introActiveRef = useRef<SVGPathElement | null>(null);
+    const tailBaselineRef = useRef<SVGPathElement | null>(null);
+    const tailActiveRef = useRef<SVGPathElement | null>(null);
+
+    // Tail geometry captured at render time — the per-frame draw must NOT re-read
+    // document.scrollHeight (forced-layout risk). Any real height change re-renders
+    // via the settle observer, refreshing this.
+    const tailGeomRef = useRef<{ tailFrom: AnchorPoint; tailTo: AnchorPoint } | null>(null);
 
     // ---- LAYOUT SYNC ----
     const rebuildAll = useCallback(() => {
@@ -392,6 +572,7 @@ export function ProgressLine() {
         } else {
             bubblesRef.current = [];
         }
+        needsRedrawRef.current = true;
     }, []);
 
     useEffect(() => {
@@ -468,32 +649,137 @@ export function ProgressLine() {
         };
     }, []);
 
-    // ---- SCROLL + RAF LOOP (original behavior + bubble slowdown, no smoothing) ----
+    // ---- PER-FRAME IMPERATIVE DRAW ----
+    // Everything tip-dependent is written straight to the SVG DOM here, bypassing
+    // React. Within one browser frame: the wheel handler moves the scroll → this
+    // runs from rAF (pre-paint) → ONE paint shows page + tip together. React
+    // reconciliation (state → diff → commit) added ≥1 frame of tip lag, visible
+    // as the line trailing the scroll and catching up on stop.
+    const drawFrame = useCallback(() => {
+        const anchors = window.lineAnchors;
+        if (!anchors) return;
+
+        const tipY = tipYRef.current;
+        const bubbles = bubblesRef.current;
+        const runtime = getBubbleRuntimeState(tipY, bubbles);
+
+        // Intro stub active
+        const introEl = introActiveRef.current;
+        if (introEl) {
+            const firstA = linePathConfig.length > 0 ? anchors[linePathConfig[0].from] : undefined;
+            if (firstA) {
+                const introFrom = { x: firstA.x, y: 0 };
+                const introTo = { x: firstA.x, y: firstA.y };
+                const stubLen = dist(introFrom, introTo);
+                const stubRawProg =
+                    introTo.y > introFrom.y
+                        ? clamp((tipY - introFrom.y) / (introTo.y - introFrom.y), 0, 1)
+                        : 1;
+                const stubProg = clampProgressByTip(stubRawProg, introFrom, introTo, tipY);
+                introEl.style.display = '';
+                introEl.setAttribute('stroke-dasharray', String(stubLen));
+                introEl.setAttribute('stroke-dashoffset', String(stubLen * (1 - stubProg)));
+            } else {
+                introEl.style.display = 'none';
+            }
+        }
+
+        // Real segments (baseline reveal + active stroke), same math as before —
+        // only the write target changed (DOM attributes instead of React state).
+        for (let i = 0; i < linePathConfig.length; i++) {
+            const seg = linePathConfig[i];
+            const fromA = anchors[seg.from];
+            const toA = anchors[seg.to];
+            const baseEl = baselineRefs.current[i];
+            const activeEl = activeRefs.current[i];
+
+            if (!fromA || !toA) {
+                if (baseEl) baseEl.style.display = 'none';
+                if (activeEl) activeEl.style.display = 'none';
+                continue;
+            }
+
+            if (baseEl) {
+                const showBaseline =
+                    i === 0 ||
+                    segmentIsWithinRevealRange(tipY, fromA, toA, BASELINE_REVEAL_AHEAD);
+                baseEl.style.display = showBaseline ? '' : 'none';
+            }
+
+            if (activeEl) {
+                let show = canDrawSegment(i, tipY, anchors, bubbles, runtime);
+
+                // don't animate a future segment until tip reached its Y,
+                // except index 0 which can start immediately.
+                if (show && i !== 0 && tipY < Math.min(fromA.y, toA.y)) show = false;
+
+                const segLen = dist(fromA, toA);
+                let finalProg = 0;
+                if (show && segLen > 0) {
+                    finalProg = clampProgressByTip(
+                        getSegmentLogicalProgress(i, tipY, anchors, bubbles),
+                        fromA,
+                        toA,
+                        tipY
+                    );
+                }
+                if (finalProg <= 0) show = false;
+
+                activeEl.style.display = show ? '' : 'none';
+                if (show) {
+                    activeEl.setAttribute('stroke-dasharray', String(segLen));
+                    activeEl.setAttribute('stroke-dashoffset', String(segLen * (1 - finalProg)));
+                }
+            }
+        }
+
+        // Bottom tail (geometry captured at render — see tailGeomRef)
+        const tg = tailGeomRef.current;
+        const tailBaseEl = tailBaselineRef.current;
+        const tailActiveEl = tailActiveRef.current;
+        if (tg) {
+            const tailVisible = segmentIsWithinRevealRange(
+                tipY,
+                tg.tailFrom,
+                tg.tailTo,
+                BASELINE_REVEAL_AHEAD
+            );
+            if (tailBaseEl) tailBaseEl.style.display = tailVisible ? '' : 'none';
+
+            const lastSegIndex = linePathConfig.length - 1;
+            const lastDone =
+                lastSegIndex >= 0 &&
+                getSegmentLogicalProgress(lastSegIndex, tipY, anchors, bubbles) >= 0.999;
+
+            const tailAnimatedVisible = tailVisible && lastDone;
+            if (tailActiveEl) {
+                tailActiveEl.style.display = tailAnimatedVisible ? '' : 'none';
+                if (tailAnimatedVisible) {
+                    const totalTailY = tg.tailTo.y - tg.tailFrom.y;
+                    const rawTailProg =
+                        totalTailY > 0 ? clamp((tipY - tg.tailFrom.y) / totalTailY, 0, 1) : 1;
+                    const tailProg = clampProgressByTip(rawTailProg, tg.tailFrom, tg.tailTo, tipY);
+                    const tailLen = dist(tg.tailFrom, tg.tailTo);
+                    tailActiveEl.setAttribute('stroke-dasharray', String(tailLen));
+                    tailActiveEl.setAttribute('stroke-dashoffset', String(tailLen * (1 - tailProg)));
+                }
+            }
+        } else {
+            if (tailBaseEl) tailBaseEl.style.display = 'none';
+            if (tailActiveEl) tailActiveEl.style.display = 'none';
+        }
+    }, []);
+
+    // ---- SCROLL + RAF LOOP (bubble slowdown + stepped-mouse glide) ----
+    // Trackpad deltas apply instantly (native feel preserved). Stepped-mouse
+    // notches accumulate into targetScrollRef and the rAF glides the page there;
+    // the tip always derives from the LIVE position, so page + line move as one.
     useEffect(() => {
         let rafId: number;
 
-        const computeViewportPos = (pageY: number) => {
-            const vh = window.innerHeight;
-            const docH = document.documentElement.scrollHeight;
-            const maxScrollForVP = docH - vh;
-
-            const INTRO = vh * 0.3;
-            const OUTRO = vh * 0.3;
-            const introEnd = INTRO;
-            const normalEnd = maxScrollForVP - OUTRO;
-
-            let vpPosNow = 0;
-            if (pageY <= introEnd) {
-                vpPosNow = (pageY / introEnd) * 0.3;
-            } else if (pageY <= normalEnd) {
-                const norm = (pageY - introEnd) / (normalEnd - introEnd);
-                vpPosNow = 0.3 + norm * 0.4;
-            } else {
-                const outro = (pageY - normalEnd) / OUTRO;
-                vpPosNow = 0.7 + outro * 0.3;
-            }
-            return clamp(vpPosNow, 0, 1);
-        };
+        // module-scope tip mapping (shared with computeBubbles' auto-budget)
+        const computeViewportPos = (pageY: number) =>
+            viewportPosAt(pageY, window.innerHeight, document.documentElement.scrollHeight);
 
         const handleWheel = (e: WheelEvent) => {
             // Yield to any full-screen overlay: while a scroll lock is active (see
@@ -502,61 +788,127 @@ export function ProgressLine() {
             // correct scrolling for free just by locking.
             if (document.documentElement.hasAttribute('data-scroll-locked')) return;
 
+            // Chrome delivers NON-cancelable wheel events during aggressive
+            // gestures (the compositor has already committed a native scroll;
+            // preventDefault is silently ignored). Applying our scrollTo on top
+            // of that incoming native step moved the page TWICE per notch — felt
+            // as a jerk/lag impulse exactly on sharp flicks. Skip those events:
+            // the native step lands, handleScroll adopts it into pageScrollRef,
+            // and the next cancelable event resumes control.
+            if (!e.cancelable) return;
+
             e.preventDefault();
 
             const vh = window.innerHeight;
             const docH = document.documentElement.scrollHeight;
             const maxScroll = docH - vh;
 
-            const currPageY = pageScrollRef.current;
-            const vpPosNow = computeViewportPos(currPageY);
-            const tipBefore = currPageY + vh * vpPosNow;
-
-            const state = getBubbleRuntimeState(tipBefore, bubblesRef.current);
-            // Same identity-preserving commit as the rAF loop (a new object per
-            // wheel event forced a spine re-render on every wheel tick).
-            setRuntime((prev) =>
-                prev.bubble === state.bubble &&
-                prev.isActive === state.isActive &&
-                prev.scrollMult === state.scrollMult
-                    ? prev
-                    : state
-            );
+            // Normalize the delta to PIXELS: Firefox reports wheel deltas in
+            // LINES (deltaMode 1, ~3 per notch) — used raw, scrolling there was
+            // near-frozen. 40px/line ≈ one Chrome notch (120px) per FF notch.
+            let rawDelta = e.deltaY;
+            if (e.deltaMode === 1) rawDelta *= 40;
+            else if (e.deltaMode === 2) rawDelta *= vh;
 
             // clamp delta a bit so we don't jump crazy amounts
-            const rawDelta = e.deltaY;
             const delta = clamp(rawDelta, -150, 150);
 
-            let newPage = currPageY + delta * state.scrollMult;
-            newPage = clamp(newPage, 0, maxScroll);
+            // Device detection. Trackpads stream fractional / small deltas at
+            // high rate; notched mice fire integer ~100/120px quanta. Anything
+            // trackpad-like latches "instant mode" for a moment so a stray
+            // integer delta mid-gesture can't make a trackpad feel floaty.
+            const now = performance.now();
+            const trackpadLike =
+                e.deltaMode === 0 &&
+                (!Number.isInteger(e.deltaY) || Math.abs(rawDelta) < TRACKPAD_DELTA_MAX);
+            if (trackpadLike) trackpadTsRef.current = now;
+            const glide = !trackpadLike && now - trackpadTsRef.current > TRACKPAD_LATCH_MS;
 
-            pageScrollRef.current = newPage;
-            wheelScrollingRef.current = true;
-            window.scrollTo(0, newPage);
+            // Advance the target through the bubble field PIECEWISE: the slow
+            // factor is re-sampled every few px of travel, so one big delta can
+            // no longer punch across a slow-zone boundary at full speed (the old
+            // single-sample version created a visible speed step at crossings).
+            const CHUNK = 12;
+            let remaining = delta * WHEEL_SPEED;
+            let page = targetScrollRef.current;
+            let guard = 64;
+            while (Math.abs(remaining) > 0.01 && guard-- > 0) {
+                const step = clamp(remaining, -CHUNK, CHUNK);
+                const tip = page + vh * computeViewportPos(page);
+                const mult = getBubbleRuntimeState(tip, bubblesRef.current).scrollMult;
+                page = clamp(page + step * mult, 0, maxScroll);
+                remaining -= step;
+                if (page === 0 || page === maxScroll) break;
+            }
+            targetScrollRef.current = page;
+
+            // Trackpad: apply instantly — its native inertia IS the smoothing.
+            // Stepped mouse: leave the move to the rAF glide below.
+            if (!glide) {
+                pageScrollRef.current = page;
+                window.scrollTo(0, page);
+            }
         };
 
         const handleScroll = () => {
-            if (wheelScrollingRef.current) {
-                wheelScrollingRef.current = false;
-                return;
-            }
             // While the collaborations rail is armed (data-rail-hijack), NO
             // outside scroll may move the page: Chrome can deliver non-cancelable
             // wheel events during aggressive gestures (preventDefault is ignored,
             // one native step slips through) — snap straight back instead.
             if (document.documentElement.hasAttribute('data-rail-hijack')) {
-                window.scrollTo(0, pageScrollRef.current);
+                if (Math.abs((window.scrollY || 0) - pageScrollRef.current) >= 1) {
+                    window.scrollTo(0, pageScrollRef.current);
+                }
                 return;
             }
+            // Adopt any EXTERNAL movement (scrollbar, keyboard, a native wheel
+            // step that slipped through) as the new truth for BOTH the position
+            // and the glide target — otherwise a leftover target would fight the
+            // user's scrollbar drag. Our own scrollTo reads back equal (within
+            // sub-px browser quantization), so the tolerance skips it and keeps
+            // our fractional precision. The old consumed-once flag desynced when
+            // the browser COALESCED our scroll event with a native one: the next
+            // wheel tick teleported the page back onto the stale track — a jerk.
             const current = window.scrollY || window.pageYOffset || 0;
-            pageScrollRef.current = current;
+            if (Math.abs(current - pageScrollRef.current) > 2) {
+                pageScrollRef.current = current;
+                targetScrollRef.current = current;
+            }
         };
 
-        let lastCommittedTip = -1;
+        let lastDrawnTip = -1;
+        let lastRafTs = -1;
+        const reduceMotionMq = window.matchMedia('(prefers-reduced-motion: reduce)');
 
         const raf = (ts: number) => {
-            if (lastTsRef.current === null) lastTsRef.current = ts;
-            lastTsRef.current = ts;
+            const dt = lastRafTs < 0 ? 16.7 : Math.min(ts - lastRafTs, 100);
+            lastRafTs = ts;
+
+            // ---- glide toward the wheel target (stepped mice only — trackpads
+            // keep page === target by applying instantly in the handler) ----
+            if (
+                document.documentElement.hasAttribute('data-scroll-locked') ||
+                document.documentElement.hasAttribute('data-rail-hijack')
+            ) {
+                // page is locked: drop any residual glide so it can't resume
+                // moving the page after the lock lifts
+                targetScrollRef.current = pageScrollRef.current;
+            } else {
+                const diff = targetScrollRef.current - pageScrollRef.current;
+                if (Math.abs(diff) > 0.05) {
+                    // exponential approach, time-based so the feel is framerate-
+                    // independent; reduced-motion users get the instant step
+                    const alpha = reduceMotionMq.matches
+                        ? 1
+                        : 1 - Math.exp(-dt / WHEEL_SMOOTH_TAU_MS);
+                    let next = pageScrollRef.current + diff * alpha;
+                    if (Math.abs(targetScrollRef.current - next) < 0.5) {
+                        next = targetScrollRef.current;
+                    }
+                    pageScrollRef.current = next;
+                    window.scrollTo(0, next);
+                }
+            }
 
             const pageY = pageScrollRef.current;
             const vh = window.innerHeight;
@@ -564,34 +916,27 @@ export function ProgressLine() {
             const vpPosNow = computeViewportPos(pageY);
             const tipNow = pageY + vh * vpPosNow;
 
-            // Commit state ONLY when the tip actually moved. Without this gate the
-            // loop re-rendered the entire spine SVG through React at 60fps even
-            // while the page sat idle — in dev mode that alone reads as scroll lag.
-            if (Math.abs(tipNow - lastCommittedTip) >= 0.1) {
-                lastCommittedTip = tipNow;
-                setTipY(tipNow);
+            // Draw ONLY when the tip actually moved (or a rebuild queued a redraw)
+            // so an idle page costs nothing. rAF runs pre-paint, so the imperative
+            // writes land in the SAME paint as the scroll that moved the page.
+            if (Math.abs(tipNow - lastDrawnTip) >= 0.1 || needsRedrawRef.current) {
+                lastDrawnTip = tipNow;
+                needsRedrawRef.current = false;
+                tipYRef.current = tipNow;
 
                 // Expose tip for other sections (like the tunnel)
                 window.progressTipY = tipNow;
 
-                const st = getBubbleRuntimeState(tipNow, bubblesRef.current);
-                // Keep object identity when nothing changed so React can skip.
-                setRuntime((prev) =>
-                    prev.bubble === st.bubble &&
-                    prev.isActive === st.isActive &&
-                    prev.scrollMult === st.scrollMult
-                        ? prev
-                        : st
-                );
+                drawFrame();
             }
 
             rafId = requestAnimationFrame(raf);
         };
 
-        // init scroll ref
+        // init scroll refs
         const initial = window.scrollY || window.pageYOffset || 0;
         pageScrollRef.current = initial;
-        lastTsRef.current = null;
+        targetScrollRef.current = initial;
 
         window.addEventListener('wheel', handleWheel, { passive: false });
         window.addEventListener('scroll', handleScroll, { passive: true });
@@ -602,7 +947,14 @@ export function ProgressLine() {
             window.removeEventListener('scroll', handleScroll);
             cancelAnimationFrame(rafId);
         };
-    }, []);
+    }, [drawFrame]);
+
+    // Re-sync the imperative strokes with the freshly-committed DOM before paint,
+    // on mount and after every rebuild re-render (paths mount display:none, so
+    // without this the whole line would flash invisible for a frame).
+    useIsomorphicLayoutEffect(() => {
+        drawFrame();
+    });
 
     // grab anchors from window
     const anchors: AnchorsMap | undefined =
@@ -626,6 +978,9 @@ export function ProgressLine() {
 
     // --- Bottom tail ---
     const { tailFrom, tailTo } = getLastAnchorAndBottomTail(anchors);
+    // Stash for drawFrame (idempotent derived data — safe to set during render):
+    // the per-frame draw must not re-read document.scrollHeight itself.
+    tailGeomRef.current = tailFrom && tailTo ? { tailFrom, tailTo } : null;
 
     // --- Portal fades ---
     // At each designed gap in the journey (the tunnel portals) the line must
@@ -648,72 +1003,9 @@ export function ProgressLine() {
     const segStroke = (i: number, base: 'static' | 'active', color: string) =>
         portalFades.has(i) ? `url(#portal-fade-${base}-${i})` : color;
 
-    const lastSegIndex = linePathConfig.length - 1;
-    function lastSegmentIsDone(): boolean {
-        if (lastSegIndex < 0) return false;
-        const prog = getSegmentLogicalProgress(
-            lastSegIndex,
-            tipY,
-            anchors,
-            bubblesRef.current
-        );
-        return prog >= 0.999;
-    }
-
-    const tailVisible =
-        tailFrom &&
-        tailTo &&
-        segmentIsWithinRevealRange(
-            tipY,
-            tailFrom,
-            tailTo,
-            BASELINE_REVEAL_AHEAD
-        )
-            ? true
-            : false;
-
-    const tailAnimatedVisible = tailVisible && lastSegmentIsDone();
-
-    let tailDasharray = 0;
-    let tailDashoffset = 0;
-    if (tailAnimatedVisible && tailFrom && tailTo) {
-        const totalTailY = tailTo.y - tailFrom.y;
-        const rawTailProg =
-            totalTailY > 0 ? clamp((tipY - tailFrom.y) / totalTailY, 0, 1) : 1;
-
-        const tailProgClamped = clampProgressByTip(
-            rawTailProg,
-            tailFrom,
-            tailTo,
-            tipY
-        );
-
-        const tailLen = dist(tailFrom, tailTo);
-        tailDasharray = tailLen;
-        tailDashoffset = tailLen * (1 - tailProgClamped);
-    }
-
-    // intro stub animated progress
-    let introDasharray = 0;
-    let introDashoffset = 0;
-    if (introFrom && introTo) {
-        const stubLen = dist(introFrom, introTo);
-
-        const stubRawProg =
-            introTo.y > introFrom.y
-                ? clamp((tipY - introFrom.y) / (introTo.y - introFrom.y), 0, 1)
-                : 1;
-
-        const stubProgClamped = clampProgressByTip(
-            stubRawProg,
-            introFrom,
-            introTo,
-            tipY
-        );
-
-        introDasharray = stubLen;
-        introDashoffset = stubLen * (1 - stubProgClamped);
-    }
+    // All tip-dependent math (baseline reveal, active dash, tail, intro stub)
+    // now lives in drawFrame — the render below only mounts the path elements
+    // (hidden) with their static geometry and lets drawFrame drive them.
 
     return (
         <svg
@@ -771,29 +1063,19 @@ export function ProgressLine() {
                 />
             )}
 
-            {/* 2. Real segments baseline */}
+            {/* 2. Real segments baseline — all mounted (hidden); drawFrame reveals
+                them per frame without any React re-render */}
             {linePathConfig.map((seg, i) => {
                 const fromA = anchors[seg.from];
                 const toA = anchors[seg.to];
                 if (!fromA || !toA) return null;
 
-                let showBaseline = segmentIsWithinRevealRange(
-                    tipY,
-                    fromA,
-                    toA,
-                    BASELINE_REVEAL_AHEAD
-                );
-
-                if (i === 0) {
-                    showBaseline = true;
-                }
-
-                if (!showBaseline) return null;
-
                 return (
                     <path
                         key={`baseline-${i}`}
+                        ref={(el) => { baselineRefs.current[i] = el; }}
                         d={`M ${fromA.x} ${fromA.y} L ${toA.x} ${toA.y}`}
+                        style={{ display: 'none' }}
                         fill="none"
                         stroke={segStroke(i, 'static', STATIC_LINE_COLOR)}
                         strokeWidth={STATIC_LINE_WIDTH}
@@ -805,9 +1087,11 @@ export function ProgressLine() {
             })}
 
             {/* 3. Tail baseline */}
-            {tailFrom && tailTo && tailVisible && (
+            {tailFrom && tailTo && (
                 <path
+                    ref={tailBaselineRef}
                     d={`M ${tailFrom.x} ${tailFrom.y} L ${tailTo.x} ${tailTo.y}`}
+                    style={{ display: 'none' }}
                     fill="none"
                     stroke={STATIC_LINE_COLOR}
                     strokeWidth={STATIC_LINE_WIDTH}
@@ -817,98 +1101,55 @@ export function ProgressLine() {
                 />
             )}
 
-            {/* 4. Intro stub active */}
+            {/* 4. Intro stub active (dash driven per frame by drawFrame) */}
             {introFrom && introTo && (
                 <path
+                    ref={introActiveRef}
                     d={`M ${introFrom.x} ${introFrom.y} L ${introTo.x} ${introTo.y}`}
+                    style={{ display: 'none' }}
                     fill="none"
                     stroke={ACTIVE_LINE_COLOR}
                     strokeWidth={ACTIVE_LINE_WIDTH}
                     strokeLinecap="round"
                     strokeLinejoin="round"
-                    strokeDasharray={introDasharray}
-                    strokeDashoffset={introDashoffset}
                     vectorEffect="non-scaling-stroke"
                 />
             )}
 
-            {/* 5. Real segments active */}
+            {/* 5. Real segments active — all mounted (hidden); drawFrame gates
+                visibility and writes the dash reveal per frame */}
             {linePathConfig.map((seg, index) => {
                 const fromA = anchors[seg.from];
                 const toA = anchors[seg.to];
                 if (!fromA || !toA) return null;
 
-                // gating: segment can't animate if future-locked by bubble
-                if (
-                    !canDrawSegment(
-                        index,
-                        tipY,
-                        anchors,
-                        bubblesRef.current,
-                        runtime
-                    )
-                ) {
-                    return null;
-                }
-
-                // don't animate a future segment until tip reached its Y,
-                // except index 0 which can start immediately.
-                if (index !== 0) {
-                    const segStartY = Math.min(fromA.y, toA.y);
-                    if (tipY < segStartY) return null;
-                }
-
-                const rawProg = getSegmentLogicalProgress(
-                    index,
-                    tipY,
-                    anchors,
-                    bubblesRef.current
-                );
-
-                const finalProg = clampProgressByTip(
-                    rawProg,
-                    fromA,
-                    toA,
-                    tipY
-                );
-
-                if (finalProg <= 0) {
-                    return null;
-                }
-
-                const segLen = dist(fromA, toA);
-                if (segLen <= 0) return null;
-
-                const dashArray = segLen;
-                const dashOffset = segLen * (1 - finalProg);
-
                 return (
                     <path
                         key={`active-${index}`}
+                        ref={(el) => { activeRefs.current[index] = el; }}
                         d={`M ${fromA.x} ${fromA.y} L ${toA.x} ${toA.y}`}
+                        style={{ display: 'none' }}
                         fill="none"
                         stroke={segStroke(index, 'active', ACTIVE_LINE_COLOR)}
                         strokeWidth={ACTIVE_LINE_WIDTH}
                         strokeLinecap="round"
                         strokeLinejoin="round"
-                        strokeDasharray={dashArray}
-                        strokeDashoffset={dashOffset}
                         vectorEffect="non-scaling-stroke"
                     />
                 );
             })}
 
             {/* 6. Tail active */}
-            {tailFrom && tailTo && tailAnimatedVisible && (
+            {tailFrom && tailTo && (
                 <path
+                    ref={tailActiveRef}
                     d={`M ${tailFrom.x} ${tailFrom.y} L ${tailTo.x} ${tailTo.y}`}
+                    style={{ display: 'none' }}
                     fill="none"
                     stroke={ACTIVE_LINE_COLOR}
                     strokeWidth={ACTIVE_LINE_WIDTH}
                     strokeLinecap="round"
                     strokeLinejoin="round"
-                    strokeDasharray={tailDasharray}
-                    strokeDashoffset={tailDashoffset}
                     vectorEffect="non-scaling-stroke"
                 />
             )}

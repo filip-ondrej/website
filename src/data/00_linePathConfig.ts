@@ -84,21 +84,102 @@ export const linePathConfig: PathSegment[] = [
     // Transition between sections (vertical)
     {
         from: 'promovideo-bottom',
-        to: 'pt-start-right-top',
+        to: 'tt-start-right-top',
         type: 'vertical',
         sectionNumber: 3,
     },
 
     // ============================================
-    // SECTION 4: PROJECT TITLE
+    // SECTION 4: TIMELINE TITLE
     // Enter RIGHT (from PromoVideo), cross R→L above the title, descend LEFT
+    // ============================================
+    // tt-start-right-top → tt-middle-right → tt-middle-left → tt-under-left → tt-bottom-left
+    {
+        from: 'tt-start-right-top',
+        to: 'tt-middle-right',
+        type: 'vertical',
+        sectionNumber: 4,
+    },
+
+    // CROSS HORIZONTALLY from RIGHT to LEFT (SLOW SCROLL)
+    {
+        from: 'tt-middle-right',
+        to: 'tt-middle-left',
+        type: 'horizontal',
+        sectionNumber: 4,
+        scrollMultiplier: 10, // 10x slower = 10% speed
+    },
+
+    // Go down on LEFT side past the title
+    {
+        from: 'tt-middle-left',
+        to: 'tt-under-left',
+        type: 'vertical',
+        sectionNumber: 4,
+    },
+    {
+        from: 'tt-under-left',
+        to: 'tt-bottom-left',
+        type: 'vertical',
+        sectionNumber: 4,
+    },
+
+    // Transition into the graph (stays LEFT)
+    {
+        from: 'tt-bottom-left',
+        to: 'timeline-top',
+        type: 'vertical',
+        sectionNumber: 4,
+    },
+
+    // ============================================
+    // SECTION 5: PROGRESS GRAPH
+    // Enter LEFT, cross L→R above the chart, knee + exit down the RIGHT side
+    // ============================================
+    {
+        from: 'timeline-top',
+        to: 'timeline-left',
+        type: 'vertical',
+        sectionNumber: 5,
+    },
+
+    {
+        from: 'timeline-left',
+        to: 'timeline-right',
+        type: 'horizontal',
+        sectionNumber: 5,
+        scrollMultiplier: 10, // 10x slower = 10% speed
+    },
+
+    // One straight descent to the section bottom (the old 'timeline-below' knee
+    // waypoint was colinear — splitting here made the slow-zone bubble end at
+    // the knee, which capped the sweep budget too low for the graph to clear
+    // the fold by the corner; measured fit needs ~202px, see BUBBLE_HORIZ_BUDGET).
+    {
+        from: 'timeline-right',
+        to: 'timeline-bottom',
+        type: 'vertical',
+        sectionNumber: 5,
+    },
+
+    // Transition to the project title (stays RIGHT)
+    {
+        from: 'timeline-bottom',
+        to: 'pt-start-right-top',
+        type: 'vertical',
+        sectionNumber: 5,
+    },
+
+    // ============================================
+    // SECTION 6: PROJECT TITLE
+    // Enter RIGHT (from the graph), cross R→L above the title, descend LEFT
     // ============================================
     // pt-start-right-top → pt-middle-right → pt-middle-left → pt-under-left → pt-bottom-left
     {
         from: 'pt-start-right-top',
         to: 'pt-middle-right',
         type: 'vertical',
-        sectionNumber: 4,
+        sectionNumber: 6,
     },
 
     // CROSS HORIZONTALLY from RIGHT to LEFT (SLOW SCROLL)
@@ -106,7 +187,7 @@ export const linePathConfig: PathSegment[] = [
         from: 'pt-middle-right',
         to: 'pt-middle-left',
         type: 'horizontal',
-        sectionNumber: 4,
+        sectionNumber: 6,
         scrollMultiplier: 10, // 10x slower = 10% speed
     },
 
@@ -115,13 +196,13 @@ export const linePathConfig: PathSegment[] = [
         from: 'pt-middle-left',
         to: 'pt-under-left',
         type: 'vertical',
-        sectionNumber: 4,
+        sectionNumber: 6,
     },
     {
         from: 'pt-under-left',
         to: 'pt-bottom-left',
         type: 'vertical',
-        sectionNumber: 4,
+        sectionNumber: 6,
     },
 
     // Transition into the projects grid
@@ -129,106 +210,23 @@ export const linePathConfig: PathSegment[] = [
         from: 'pt-bottom-left',
         to: 'projects-top',
         type: 'vertical',
-        sectionNumber: 4,
+        sectionNumber: 6,
     },
 
     // ============================================
-    // SECTION 5: PROJECTS
+    // SECTION 7: PROJECTS
     // Simple vertical line down the left side
     // ============================================
     {
         from: 'projects-top',
         to: 'projects-bottom',
         type: 'vertical',
-        sectionNumber: 5,
+        sectionNumber: 7,
     },
 
-    // Transition between sections (vertical, stays LEFT)
+    // Transition to collaborations (vertical, stays LEFT — ct-start-left-top unchanged)
     {
         from: 'projects-bottom',
-        to: 'tt-start-left-top',
-        type: 'vertical',
-        sectionNumber: 5,
-    },
-
-    // ============================================
-    // SECTION 6: TIMELINE TITLE (MIRRORED)
-    // Enter LEFT (from Projects), cross L→R above the title, descend RIGHT
-    // ============================================
-    // tt-start-left-top → tt-middle-left → tt-middle-right → tt-under-right → tt-bottom-right
-    {
-        from: 'tt-start-left-top',
-        to: 'tt-middle-left',
-        type: 'vertical',
-        sectionNumber: 6,
-    },
-
-    // CROSS HORIZONTALLY from LEFT to RIGHT (SLOW SCROLL)
-    {
-        from: 'tt-middle-left',
-        to: 'tt-middle-right',
-        type: 'horizontal',
-        sectionNumber: 6,
-        scrollMultiplier: 10, // 10x slower = 10% speed
-    },
-
-    // Go down on RIGHT side
-    {
-        from: 'tt-middle-right',
-        to: 'tt-under-right',
-        type: 'vertical',
-        sectionNumber: 6,
-    },
-    {
-        from: 'tt-under-right',
-        to: 'tt-bottom-right',
-        type: 'vertical',
-        sectionNumber: 6,
-    },
-
-    // Transition into the graph (stays RIGHT)
-    {
-        from: 'tt-bottom-right',
-        to: 'timeline-top',
-        type: 'vertical',
-        sectionNumber: 6,
-    },
-
-    // ============================================
-    // SECTION 7: PROGRESS GRAPH (MIRRORED)
-    // Enter RIGHT, cross R→L above the chart, knee + exit down the LEFT side
-    // ============================================
-    {
-        from: 'timeline-top',
-        to: 'timeline-right',
-        type: 'vertical',
-        sectionNumber: 7,
-    },
-
-    {
-        from: 'timeline-right',
-        to: 'timeline-left',
-        type: 'horizontal',
-        sectionNumber: 7,
-        scrollMultiplier: 10, // 10x slower = 10% speed
-    },
-
-    {
-        from: 'timeline-left',
-        to: 'timeline-below',
-        type: 'vertical',
-        sectionNumber: 7,
-    },
-    {
-        from: 'timeline-below',
-        to: 'timeline-bottom',
-        type: 'vertical',
-        sectionNumber: 7,
-    },
-
-    // Transition to collaborations (stays LEFT — ct-start-left-top unchanged)
-    {
-        from: 'timeline-bottom',
         to: 'ct-start-left-top',
         type: 'vertical',
         sectionNumber: 7,
