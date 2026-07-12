@@ -9,7 +9,10 @@ type ContactMethod = {
     label: string;
     value: string;
     href: string;
-    type: 'email' | 'link';
+    // link = external (new tab) · email = mailto · internal = same-tab route ·
+    // download = browser downloads the target file
+    type: 'email' | 'link' | 'internal' | 'download';
+    accent?: boolean; // gold treatment (the collaborate invitation)
 };
 
 const contactMethods: ContactMethod[] = [
@@ -35,11 +38,22 @@ const contactMethods: ContactMethod[] = [
         type: 'link',
     },
     {
-        id: 'github',
-        label: 'GITHUB',
-        value: 'github.com/filip-ondrej',
-        href: 'https://github.com/filip-ondrej',
-        type: 'link',
+        // Backstop for the nav's collaborate entry — the /collaborate page is
+        // roadmap #5; the link 404s until it lands (pre-launch, acceptable).
+        id: 'collaborate',
+        label: 'COLLABORATE',
+        value: 'filipondrej.com/collaborate',
+        href: '/collaborate',
+        type: 'internal',
+        accent: true,
+    },
+    {
+        // The PDF ships in the content pass — drop it at /public/cv/.
+        id: 'cv',
+        label: 'CV',
+        value: 'filip-ondrej-cv.pdf',
+        href: '/cv/filip-ondrej-cv.pdf',
+        type: 'download',
     },
 ];
 
@@ -61,17 +75,49 @@ const timelineImages = [
 
 export default function ContactFooter() {
     const [currentIndex, setCurrentIndex] = React.useState(0);
+    const rootRef = React.useRef<HTMLElement | null>(null);
 
-    // Auto-advance every 4 seconds
+    // Slideshow hygiene: the 4s auto-advance runs ONLY while the footer is
+    // actually on screen (no interval churn while reading the rest of the
+    // page), holds while the cursor rests on the picture (don't race the
+    // reader), and stops entirely under prefers-reduced-motion (the CSS kills
+    // the cross-fade, so auto-advancing would hard-JUMP images — worse than
+    // the motion it replaces). The year dots always work — user-initiated
+    // swaps are fine in every mode.
+    const [inView, setInView] = React.useState(false);
+    const [galleryHovered, setGalleryHovered] = React.useState(false);
+    const [reducedMotion, setReducedMotion] = React.useState(false);
+
     React.useEffect(() => {
+        const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+        const apply = () => setReducedMotion(mq.matches);
+        apply();
+        mq.addEventListener('change', apply);
+        return () => mq.removeEventListener('change', apply);
+    }, []);
+
+    React.useEffect(() => {
+        const el = rootRef.current;
+        if (!el) return;
+        const io = new IntersectionObserver(
+            (entries) => setInView(entries[0]?.isIntersecting ?? false),
+            { threshold: 0.15 }
+        );
+        io.observe(el);
+        return () => io.disconnect();
+    }, []);
+
+    React.useEffect(() => {
+        if (!inView || galleryHovered || reducedMotion) return;
         const timer = setInterval(() => {
             setCurrentIndex((prev) => (prev + 1) % timelineImages.length);
         }, 4000);
         return () => clearInterval(timer);
-    }, []);
+    }, [inView, galleryHovered, reducedMotion]);
 
     return (
         <footer
+            ref={rootRef}
             className="contact-footer"
             style={{
                 // Cage x-inset mirrors the spine's x exactly (100px @1440):
@@ -104,7 +150,11 @@ export default function ContactFooter() {
             <div className="content">
                 {/* LEFT: Image Gallery */}
                 <div className="gallery">
-                    <div className="gallery-container">
+                    <div
+                        className="gallery-container"
+                        onMouseEnter={() => setGalleryHovered(true)}
+                        onMouseLeave={() => setGalleryHovered(false)}
+                    >
                         {timelineImages.map((img, i) => (
                             <div key={img.year} className={`slide ${i === currentIndex ? 'active' : ''}`}>
                                 <Image
@@ -139,30 +189,33 @@ export default function ContactFooter() {
                     </div>
                 </div>
 
-                {/* RIGHT: Contact */}
+                {/* RIGHT: Contact — the links divide the column's full height
+                    (which the gallery + year strip on the left determine). */}
                 <div className="contact">
                     {contactMethods.map((c) => (
                         <a
                             key={c.id}
                             href={c.href}
-                            className="link"
+                            className={`link${c.accent ? ' link--accent' : ''}`}
                             target={c.type === 'link' ? '_blank' : undefined}
                             rel={c.type === 'link' ? 'noopener noreferrer' : undefined}
+                            download={c.type === 'download' ? true : undefined}
                         >
                             <span className="label">{c.label}</span>
                             <span className="value">{c.value}</span>
                             <div className="arrow">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M7 17L17 7M17 7H7M17 7V17"/>
-                                </svg>
+                                {c.type === 'download' ? (
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <path d="M12 4v12M6 12l6 6 6-6M5 21h14"/>
+                                    </svg>
+                                ) : (
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <path d="M7 17L17 7M17 7H7M17 7V17"/>
+                                    </svg>
+                                )}
                             </div>
                         </a>
                     ))}
-
-                    <div className="availability-badge">
-                        <div className="badge-dot" />
-                        <span className="badge-text">AVAILABLE FOR PROJECTS</span>
-                    </div>
                 </div>
             </div>
 
@@ -227,7 +280,10 @@ export default function ContactFooter() {
                     position: absolute;
                     top: 0;
                     left: var(--cf-x);
-                    right: var(--cf-x);
+                    /* Runs THROUGH the right cage line to the browser edge (the
+                       line above LINKEDIN) — the left end still starts at the
+                       spine mirror. */
+                    right: 0;
                     height: 1px;
                     background: rgba(255, 255, 255, 0.08);
                 }
@@ -353,11 +409,19 @@ export default function ContactFooter() {
                     font-weight: 600;
                     letter-spacing: 0.1em;
                     color: rgba(255, 255, 255, 0.4);
-                    transition: color 0.3s ease;
+                    transition: color 0.3s ease, font-size 0.3s ease;
+                    /* Reserve the ACTIVE size's height so the row never grows when
+                       a year swells — a 1px document-height change every 4s would
+                       otherwise trip the spine's settle observer into a rebuild
+                       on every slide tick. */
+                    line-height: calc(0.625rem * 16 / 14);
                 }
 
                 .dot.active .label {
                     color: rgba(255, 255, 255, 0.9);
+                    /* Projected year grows by the SAME ratio as the graph's
+                       focused year label (16px over its 14px base). */
+                    font-size: calc(0.625rem * 16 / 14);
                 }
 
                 .dot:hover .label {
@@ -379,7 +443,12 @@ export default function ContactFooter() {
                     grid-template-columns: 6.25rem minmax(0, 1fr) auto;
                     align-items: center;
                     gap: 1.5rem;
-                    padding: clamp(18px, 3vh, 22px) 2rem;
+                    /* flex: 1 — the links share the column height EQUALLY, so the
+                       stack's bottom lands exactly on the gallery + year strip's
+                       bottom (grid align-items: stretch equalizes the columns).
+                       The padding is now a minimum, not the height driver. */
+                    flex: 1 1 0;
+                    padding: clamp(14px, 2vh, 20px) 2rem;
                     text-decoration: none;
                     border-top: 1px solid rgba(255, 255, 255, 0.08);
                     background: transparent;
@@ -460,45 +529,32 @@ export default function ContactFooter() {
                     color: rgba(255, 255, 255, 0.8);
                 }
 
-                /* Availability Badge */
-                .availability-badge {
-                    display: flex;
-                    align-items: center;
-                    gap: 0.75rem;
-                    padding: clamp(16px, 3vh, 20px) 2rem;
-                    background: rgba(255, 255, 255, 0.05);
-                    border: 1px solid rgba(255, 255, 255, 0.1);
-                    width: max-content;
-                    max-width: 100%;
-                    margin-top: clamp(20px, 3vh, 30px);
+                /* GOLD accent link — the collaborate invitation. Same anatomy as
+                   the other links; only the palette shifts to the site gold. */
+                .link--accent .value {
+                    background: linear-gradient(135deg, #FEF3C7 0%, #FDE047 25%, #FFD60A 50%, #F59E0B 75%, #B45309 100%);
+                    -webkit-background-clip: text;
+                    -webkit-text-fill-color: transparent;
+                    background-clip: text;
                 }
-
-                .badge-dot {
-                    width: 0.625rem;
-                    height: 0.625rem;
-                    border-radius: 50%;
-                    background: rgba(255, 255, 255, 0.8);
-                    box-shadow: 0 0 12px rgba(255, 255, 255, 0.5);
-                    animation: pulse 2s ease-in-out infinite;
+                .link--accent .label {
+                    color: rgba(255, 214, 10, 0.45);
                 }
-
-                @keyframes pulse {
-                    0%, 100% {
-                        opacity: 1;
-                        transform: scale(1);
-                    }
-                    50% {
-                        opacity: 0.6;
-                        transform: scale(1.1);
-                    }
+                .link--accent::before {
+                    background: linear-gradient(180deg, #FDE047 0%, #F59E0B 100%);
                 }
-
-                .badge-text {
-                    font-size: 0.6875rem;
-                    font-weight: 600;
-                    letter-spacing: 0.18em;
-                    color: rgba(255, 255, 255, 0.7);
-                    text-transform: uppercase;
+                .link--accent:hover {
+                    background: rgba(255, 214, 10, 0.04);
+                }
+                .link--accent:hover .label {
+                    color: rgba(255, 214, 10, 0.85);
+                }
+                .link--accent:hover .value {
+                    text-shadow: none;
+                    filter: drop-shadow(0 0 14px rgba(255, 214, 10, 0.35));
+                }
+                .link--accent:hover .arrow {
+                    color: rgba(255, 214, 10, 0.85);
                 }
 
                 /* FOOTER BAR */
@@ -506,7 +562,10 @@ export default function ContactFooter() {
                     position: relative;
                     z-index: 1;
                     border-top: 1px solid rgba(255, 255, 255, 0.08);
-                    padding: clamp(32px, 4vh, 40px) var(--cf-x);
+                    /* Horizontal inset = spine x + 3.125rem (100px + 50px = 150px
+                       at 1440, both terms fluid) so the copyright / precision
+                       captions breathe instead of starting exactly at the line. */
+                    padding: clamp(32px, 4vh, 40px) calc(var(--cf-x) + 3.125rem);
                     background: transparent;
                 }
 

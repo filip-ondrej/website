@@ -73,7 +73,12 @@ export default function Recognition() {
     /* ---------------------------------
        responsive layout math
     --------------------------------- */
-    const [vw, setVw] = React.useState(0);
+    // 1440 (the design reference), NOT 0: with 0 every derived size collapsed in
+    // the SSR/static-export HTML — the section rendered flat, crawlers saw a
+    // collapsed cage, and below-fold lazy media measured as "near viewport" on
+    // first paint and loaded early. The layout effect corrects to the real width
+    // before the first client paint, so nothing visible changes at runtime.
+    const [vw, setVw] = React.useState(1440);
 
     React.useLayoutEffect(() => {
         const onR = () => setVw(window.innerWidth);

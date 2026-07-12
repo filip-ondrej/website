@@ -3,6 +3,7 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import {filipRealEvents, impactConfig} from '@/data/graphData';
+import {useScrollLock} from '@/lib/useScrollLock';
 
 /* ==================== TYPES ==================== */
 export type AchievementData = {
@@ -55,6 +56,11 @@ export default function AchievementModal({data, isOpen, onClose}: Props) {
     const [activeSection, setActiveSection] = React.useState(0);
     const [showTitle, setShowTitle] = React.useState(false);
 
+    // Shared page lock: body overflow hidden + data-scroll-locked so the
+    // ProgressLine wheel engine yields (native scroll inside the modal).
+    // Replaces the legacy body position:fixed hack + per-element wheel guards.
+    useScrollLock(isOpen);
+
     // Arrow ref – used to replay animation on hero hover and on open
     const arrowRef = React.useRef<SVGSVGElement | null>(null);
 
@@ -88,12 +94,6 @@ export default function AchievementModal({data, isOpen, onClose}: Props) {
             }
         };
 
-        // Lock body scroll (preserve page position)
-        const scrollY = window.scrollY;
-        document.body.style.position = 'fixed';
-        document.body.style.top = `-${scrollY}px`;
-        document.body.style.width = '100%';
-
         document.addEventListener('keydown', handleEsc);
         document.addEventListener('keydown', handleArrowKeys);
 
@@ -106,25 +106,6 @@ export default function AchievementModal({data, isOpen, onClose}: Props) {
         return () => {
             document.removeEventListener('keydown', handleEsc);
             document.removeEventListener('keydown', handleArrowKeys);
-
-            // Reset styles
-            document.body.style.position = '';
-            document.body.style.top = '';
-            document.body.style.width = '';
-
-            // Restore scroll position
-            window.scrollTo(0, scrollY);
-
-            // FORCE the ProgressLine to update by triggering scroll event
-            requestAnimationFrame(() => {
-                window.scrollTo(0, scrollY); // Ensure it's still at the right position
-                window.dispatchEvent(new Event('scroll')); // Trigger scroll event
-
-                // Double-check after another frame
-                requestAnimationFrame(() => {
-                    window.scrollTo(0, scrollY);
-                });
-            });
         };
     }, [isOpen, onClose]);
 
@@ -297,13 +278,10 @@ export default function AchievementModal({data, isOpen, onClose}: Props) {
             ref={backdropRef}
             className="achievement-modal-backdrop"
             onClick={handleBackdropClick}
-            onWheel={(e) => e.preventDefault()}
-            onTouchMove={(e) => e.preventDefault()}
         >
             <div
                 ref={containerRef}
                 className="achievement-modal-container"
-                onWheel={e => e.stopPropagation()}
             >
                 {/* Progress system */}
                 <div className="progress-system">

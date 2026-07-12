@@ -3,6 +3,7 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import Image from 'next/image';
+import { useScrollLock } from '@/lib/useScrollLock';
 
 /* ==================== TYPES ==================== */
 export type CollaborationData = {
@@ -35,6 +36,10 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
     const [scrollProgress, setScrollProgress] = React.useState(0);
     const [activeSection, setActiveSection] = React.useState(0);
     const [isReading, setIsReading] = React.useState(false);
+
+    // Shared page lock: body overflow hidden + data-scroll-locked so the
+    // ProgressLine wheel engine yields (native scroll inside the modal).
+    useScrollLock(isOpen);
 
     /* Calculate read time */
     function calcReadTimeFromMarkdown(raw: string, wpm = 225): number {
@@ -91,7 +96,6 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
 
         document.addEventListener('keydown', handleEsc);
         document.addEventListener('keydown', handleArrowKeys);
-        document.body.style.overflow = 'hidden';
 
         const container = containerRef.current;
         if (container) {
@@ -101,7 +105,6 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
         return () => {
             document.removeEventListener('keydown', handleEsc);
             document.removeEventListener('keydown', handleArrowKeys);
-            document.body.style.overflow = 'unset';
         };
     }, [isOpen, onClose]);
 
@@ -392,6 +395,43 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                                 </blockquote>
                             ),
                             strong: ({ ...props }) => <strong className="story-emphasis" {...props} />,
+                            // Media in the story body, all via markdown image syntax:
+                            //   ![caption](/images/foo.jpg)            → styled figure
+                            //   ![caption](https://vimeo.com/123)     → responsive Vimeo embed
+                            //   ![caption](https://youtube.com/watch?v=x | youtu.be/x) → YouTube embed
+                            // One convention for pictures AND videos so a collaboration's
+                            // media is added/removed by editing its .md file only.
+                            img: ({ src, alt }) => {
+                                const url = typeof src === 'string' ? src : '';
+                                const vimeo = url.match(/vimeo\.com\/(\d+)/);
+                                const youtube = url.match(
+                                    /(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/
+                                );
+                                if (vimeo || youtube) {
+                                    const embedSrc = vimeo
+                                        ? `https://player.vimeo.com/video/${vimeo[1]}`
+                                        : `https://www.youtube-nocookie.com/embed/${youtube![1]}`;
+                                    return (
+                                        <span className="story-media">
+                                            <iframe
+                                                src={embedSrc}
+                                                title={alt || 'Embedded video'}
+                                                allow="autoplay; fullscreen; picture-in-picture"
+                                                allowFullScreen
+                                                loading="lazy"
+                                            />
+                                            {alt && <span className="story-media-caption">{alt}</span>}
+                                        </span>
+                                    );
+                                }
+                                return (
+                                    <span className="story-media">
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                        <img src={url} alt={alt || ''} loading="lazy" decoding="async" />
+                                        {alt && <span className="story-media-caption">{alt}</span>}
+                                    </span>
+                                );
+                            },
                         }}
                     >
                         {data.story}
@@ -1220,6 +1260,39 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                 .story-emphasis {
                     font-weight: 700;
                     color: rgba(255, 255, 255, 0.95);
+                }
+
+                /* Story media (pictures + video embeds via markdown image syntax).
+                   span-based (not figure/div) because it renders inside a <p>. */
+                .story-media {
+                    display: block;
+                    margin: 40px 60px;
+                }
+                .story-media img,
+                .story-media iframe {
+                    display: block;
+                    width: 100%;
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    background: #000;
+                }
+                .story-media iframe {
+                    aspect-ratio: 16 / 9;
+                }
+                .story-media img {
+                    height: auto;
+                }
+                .story-media-caption {
+                    display: block;
+                    margin-top: 10px;
+                    font: 600 11px/1.4 'Rajdhani', monospace;
+                    letter-spacing: 0.12em;
+                    text-transform: uppercase;
+                    color: rgba(255, 255, 255, 0.45);
+                }
+                @media (max-width: 768px) {
+                    .story-media {
+                        margin: 28px 0;
+                    }
                 }
 
                 /* FOOTER */

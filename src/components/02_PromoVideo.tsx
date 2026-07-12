@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { LineAnchor } from '@/components/00_LineAnchor';
+import { useScrollLock } from '@/lib/useScrollLock';
 
 type ScrollVideoProps = {
     backgroundVideoUrl?: string;
@@ -18,6 +19,12 @@ export default function ScrollVideo({
     const [progress, setProgress] = React.useState(0);
     const [isHovering, setIsHovering] = React.useState(false);
     const [isFullscreen, setIsFullscreen] = React.useState(false);
+
+    // Shared page lock while the fullscreen player is open: body overflow
+    // hidden + data-scroll-locked so the ProgressLine wheel engine yields.
+    // Replaces the legacy body position:fixed hack (which zeroed window.scrollY
+    // and made the spine's canonical scroll ref drift while the modal was open).
+    useScrollLock(isFullscreen);
 
     // Mount the looping background player only when the section is within one
     // viewport of view (loading speed: the iframe + Vimeo player boot are heavy
@@ -130,12 +137,6 @@ export default function ScrollVideo({
             }
         };
 
-        // Lock body scroll (preserve page position)
-        const scrollY = window.scrollY;
-        document.body.style.position = 'fixed';
-        document.body.style.top = `-${scrollY}px`;
-        document.body.style.width = '100%';
-
         // A11y: remember what was focused, then move focus into the dialog.
         const previouslyFocused = document.activeElement as HTMLElement | null;
         requestAnimationFrame(() => closeBtnRef.current?.focus());
@@ -189,28 +190,6 @@ export default function ScrollVideo({
                 } catch {}
             }
             previouslyFocused?.focus();
-
-            // Reset styles
-            document.body.style.position = '';
-            document.body.style.top = '';
-            document.body.style.width = '';
-
-            // Restore scroll position
-            window.scrollTo(0, scrollY);
-
-            // FORCE the ProgressLine to update by triggering scroll event
-            requestAnimationFrame(() => {
-                window.scrollTo(0, scrollY); // Ensure it's still at the right position
-                window.dispatchEvent(new Event('scroll')); // Trigger scroll event
-                window.dispatchEvent(new Event('resize')); // Also trigger resize event
-
-                // Double-check after another frame
-                requestAnimationFrame(() => {
-                    window.scrollTo(0, scrollY);
-                    window.dispatchEvent(new Event('scroll'));
-                    window.dispatchEvent(new Event('resize'));
-                });
-            });
         };
     }, [isFullscreen]);
 
@@ -313,7 +292,9 @@ export default function ScrollVideo({
                         />
                         )}
 
-                        {/* Play button overlay */}
+                        {/* Play button overlay — ALWAYS present so the frame reads as a
+                            video at a glance: idle = half-size, faint, no dark wash;
+                            hover/focus = full-size + dimmed backdrop (original look). */}
                         <div
                             className={`play-overlay ${isHovering ? 'visible' : ''}`}
                             style={{
@@ -322,9 +303,8 @@ export default function ScrollVideo({
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                background: 'rgba(0, 0, 0, 0.4)',
-                                opacity: isHovering ? 1 : 0,
-                                transition: 'opacity 0.3s ease',
+                                background: isHovering ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 0, 0, 0)',
+                                transition: 'background 0.3s ease',
                                 pointerEvents: 'none',
                             }}
                         >
@@ -336,8 +316,10 @@ export default function ScrollVideo({
                                     width: '200px',
                                     height: '200px',
                                     filter: 'drop-shadow(0 4px 12px rgba(0, 0, 0, 0.3))',
-                                    transform: isHovering ? 'scale(1)' : 'scale(0.8)',
-                                    transition: 'transform 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                                    transform: isHovering ? 'scale(1)' : 'scale(0.65)',
+                                    opacity: isHovering ? 1 : 0.45,
+                                    transition:
+                                        'transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease',
                                 }}
                             >
                                 <defs>

@@ -20,16 +20,16 @@ export default function Collaborations() {
     const [selectedCollab, setSelectedCollab] = useState<Collaborator | null>(null);
     const [collabData, setCollabData] = useState<CollaborationData | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [isLoading, setIsLoading] = useState(false);
 
+    // Only story-backed tiles open a modal (see Collaborator.storySlug). The md
+    // is a local static file, so the fetch is effectively instant — the modal
+    // opens when the data is ready, no loading overlay needed.
     const openModal = async (collab: Collaborator) => {
+        if (!collab.storySlug) return;
         setSelectedCollab(collab);
-        setIsModalOpen(true);
-        setIsLoading(true);
-
-        const data = await loadCollaboration(collab.slug);
+        const data = await loadCollaboration(collab.storySlug);
         setCollabData(data);
-        setIsLoading(false);
+        setIsModalOpen(true);
     };
 
     const closeModal = () => {
@@ -204,18 +204,10 @@ export default function Collaborations() {
                 <Tape label="COLLABORATIONS & COMPANY EXPERIENCE" reverse />
             </section>
 
-            {/* Loading Overlay */}
-            {isLoading && (
-                <div className="collab-loading-overlay">
-                    <div className="loading-spinner"></div>
-                    <p>Loading collaboration details...</p>
-                </div>
-            )}
-
             {/* Modal */}
             <CollaborationModal
                 data={collabData}
-                isOpen={isModalOpen && !isLoading}
+                isOpen={isModalOpen}
                 onClose={closeModal}
                 logo={selectedCollab?.logo}
                 href={selectedCollab?.href}
@@ -234,45 +226,6 @@ export default function Collaborations() {
 
                 .collab-content {
                     position: relative;
-                }
-
-                /* ============================================== */
-                /* LOADING OVERLAY */
-                /* ============================================== */
-
-                .collab-loading-overlay {
-                    position: fixed;
-                    inset: 0;
-                    background: rgba(0, 0, 0, 0.92);
-                    backdrop-filter: blur(8px);
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    justify-content: center;
-                    gap: 20px;
-                    z-index: 9999;
-                }
-
-                .loading-spinner {
-                    width: 48px;
-                    height: 48px;
-                    border: 3px solid rgba(255, 255, 255, 0.1);
-                    border-top-color: rgba(255, 255, 255, 0.6);
-                    border-radius: 50%;
-                    animation: spin 1s linear infinite;
-                }
-
-                @keyframes spin {
-                    to {
-                        transform: rotate(360deg);
-                    }
-                }
-
-                .collab-loading-overlay p {
-                    font: 400 14px/1 'Rajdhani', monospace;
-                    color: rgba(255, 255, 255, 0.6);
-                    letter-spacing: 0.08em;
-                    text-transform: uppercase;
                 }
 
                 /* ============================================== */
@@ -435,6 +388,16 @@ export default function Collaborations() {
                     z-index: 1;
                 }
 
+                /* Tiles WITHOUT a story: plain logo — no click affordance. The
+                   hover caption still shows (it names the relationship), but the
+                   corner "open" glyph is hidden and the cursor stays default. */
+                .brand-link.no-story {
+                    cursor: default;
+                }
+                .brand-link.no-story .brand-corner {
+                    display: none;
+                }
+
                 .brand-link img {
                     opacity: 0.85;
                     transition: opacity 0.25s ease;
@@ -586,6 +549,10 @@ interface BrandTileProps {
 }
 
 function BrandTile({ c, onClick }: BrandTileProps) {
+    // Story-backed tiles are interactive (open the modal); the rest are plain
+    // logos — no pointer cursor, no corner "open" glyph, no click handler.
+    const interactive = !!c.storySlug;
+
     const content = c.logo ? (
         <Image
             src={c.logo}
@@ -601,7 +568,23 @@ function BrandTile({ c, onClick }: BrandTileProps) {
 
     return (
         <li className="brand">
-            <div className="brand-link" onClick={onClick}>
+            <div
+                className={`brand-link${interactive ? '' : ' no-story'}`}
+                onClick={interactive ? onClick : undefined}
+                role={interactive ? 'button' : undefined}
+                tabIndex={interactive ? 0 : undefined}
+                aria-label={interactive ? `Open ${c.name} collaboration story` : undefined}
+                onKeyDown={
+                    interactive
+                        ? (e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  onClick();
+                              }
+                          }
+                        : undefined
+                }
+            >
                 {content}
                 <span className="brand-card" aria-hidden="true">
                     <span className="brand-corner" aria-hidden="true">
