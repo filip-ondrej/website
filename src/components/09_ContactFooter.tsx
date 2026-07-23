@@ -50,7 +50,7 @@ const contactMethods: ContactMethod[] = [
     {
         // The PDF ships in the content pass — drop it at /public/cv/.
         id: 'cv',
-        label: 'CV',
+        label: 'RESUME',
         value: 'filip-ondrej-cv.pdf',
         href: '/cv/filip-ondrej-cv.pdf',
         type: 'download',
@@ -222,7 +222,7 @@ export default function ContactFooter() {
             {/* FOOTER BAR */}
             <div className="bar">
                 <div className="bar-inner">
-                    <span>© 2025 FILIP ONDREJ</span>
+                    <span>© 2026 FILIP ONDREJ</span>
                     <span className="divider">/</span>
                     <span>10 YEARS OF ROBOTICS</span>
                     <span className="spacer" />

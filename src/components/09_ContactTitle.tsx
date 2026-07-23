@@ -5,8 +5,11 @@ import clsx from 'clsx';
 import { LineAnchor } from '@/components/00_LineAnchor';
 import { useScrollProgress, useChasingTypewriter } from '@/lib/titleTypewriter';
 
+/** A run of characters within a title line; gold runs get the gradient. */
+export type TitleSegment = { text: string; gold?: boolean };
+
 type ContactTitleProps = {
-    lines?: string[];
+    lines?: TitleSegment[][];
     className?: string;
     scale?: number;               // font size multiplier
     leftOffsetPx?: number;        // horizontal offset of the title
@@ -64,6 +67,18 @@ const styles = `
 .cft-ch { display:inline-block; opacity:0; }
 .cft-ch--v { opacity:1; }
 
+/* Gold run — gradient clips across the WHOLE segment (one smooth sweep over
+   the word), not per character. Chars inside keep the opacity typewriter. */
+.cft-gold {
+  background: linear-gradient(135deg,#FEF3C7 0%,#FDE047 25%,#FFD60A 50%,#F59E0B 75%,#B45309 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: drop-shadow(0 0 12px rgba(255,214,10,0.35));
+  animation: cftGoldShimmer 3s ease-in-out infinite;
+}
+@keyframes cftGoldShimmer { 0%,100%{filter:drop-shadow(0 0 8px rgba(255,214,10,0.4))} 50%{filter:drop-shadow(0 0 12px rgba(255,214,10,0.6))} }
+
 .cft-cur {
   display:inline-block;
   width:3px;
@@ -94,11 +109,18 @@ const styles = `
 
 @media (prefers-reduced-motion: reduce) {
   .cft-cur  { animation: none !important; }
+  .cft-gold { animation: none !important; }
 }
 `;
 
 export default function ContactTitle({
-                                         lines = ["LET'S WORK", 'TOGETHER'],
+                                         // ONE line by design: two lines clipped at some widths, and a single
+                                         // decisive sentence lands harder as the site's closing beat.
+                                         lines = [[
+                                             { text: 'READY', gold: true },
+                                             { text: ' WHEN YOU ARE ' },
+                                             { text: ';)', gold: true },
+                                         ]],
                                          className,
                                          scale = 0.785,
                                          leftOffsetPx = 200,
@@ -157,9 +179,14 @@ export default function ContactTitle({
     const { progress, isPaused } = useScrollProgress(ref, lockedComplete || reducedMotion);
     const gatedProgress = started ? progress : 0;
 
-    const totalChars = React.useMemo(
-        () => lines.reduce((s, l) => s + l.length, 0),
+    // Per-line char counts (a line is an array of segments)
+    const lineLengths = React.useMemo(
+        () => lines.map((segs) => segs.reduce((a, s) => a + s.text.length, 0)),
         [lines],
+    );
+    const totalChars = React.useMemo(
+        () => lineLengths.reduce((s, l) => s + l, 0),
+        [lineLengths],
     );
 
     // Latch completion once we're 80% through the gated scroll progress.
@@ -186,12 +213,12 @@ export default function ContactTitle({
 
     const visible = React.useMemo(() => {
         let remaining = typedChars;
-        return lines.map((line) => {
-            const c = Math.min(line.length, Math.max(0, remaining));
-            remaining -= line.length;
+        return lineLengths.map((len) => {
+            const c = Math.min(len, Math.max(0, remaining));
+            remaining -= len;
             return c;
         });
-    }, [typedChars, lines]);
+    }, [typedChars, lineLengths]);
 
     const allDone = reducedMotion || (lockedComplete && typedChars === totalChars);
 
@@ -261,24 +288,33 @@ export default function ContactTitle({
             <h1 className="cft-title">
                 {(() => {
                     let charsBefore = 0;
-                    return lines.map((line, li) => {
+                    return lines.map((segments, li) => {
+                        const lineLen = lineLengths[li] ?? 0;
                         const start = charsBefore;
-                        charsBefore += line.length;
+                        charsBefore += lineLen;
                         const lineVisible = visible[li] ?? 0;
                         const isLastLine = li === lines.length - 1;
 
+                        let segOffset = 0;
                         return (
                             <span className="cft-line" key={`l${li}`}>
-                                {line.split('').map((ch, i) => (
-                                    <React.Fragment key={`l${li}-${i}`}>
-                                        <span className={clsx('cft-ch', i < lineVisible && 'cft-ch--v')}>
+                                {segments.map((seg, si) => {
+                                    const offset = segOffset;
+                                    segOffset += seg.text.length;
+                                    return (
+                                <span key={`l${li}-s${si}`} className={clsx(seg.gold && 'cft-gold')}>
+                                {seg.text.split('').map((ch, i) => {
+                                    const lineIdx = offset + i;
+                                    return (
+                                    <React.Fragment key={`l${li}-s${si}-${i}`}>
+                                        <span className={clsx('cft-ch', lineIdx < lineVisible && 'cft-ch--v')}>
                                             {ch === ' ' ? ' ' : ch}
                                         </span>
                                         {/* Cursor right after the last visible char of the line being typed */}
                                         {!allDone &&
-                                            i === lineVisible - 1 &&
+                                            lineIdx === lineVisible - 1 &&
                                             typedChars > start &&
-                                            typedChars <= start + line.length && (
+                                            typedChars <= start + lineLen && (
                                                 <span
                                                     className={clsx(
                                                         'cft-cur',
@@ -287,7 +323,11 @@ export default function ContactTitle({
                                                 />
                                             )}
                                     </React.Fragment>
-                                ))}
+                                    );
+                                })}
+                                </span>
+                                    );
+                                })}
                                 {/* Final done-cursor after the last line (skipped under reduced motion) */}
                                 {isLastLine && allDone && !reducedMotion && (
                                     <span className="cft-cur cft-cur--done" />

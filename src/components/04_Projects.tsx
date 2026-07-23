@@ -2,68 +2,8 @@
 
 import React from 'react';
 import { LineAnchor } from '@/components/00_LineAnchor';
-import ProjectModal, { type ProjectModalData } from '@/components/ProjectModal';
-
-/* ---------- Local project data ----------
-   ProjectItem is the modal's data shape: id/title/year/blurb/images/tags drive the card,
-   plus the OPTIONAL rich fields (hook, overview, challenge, outcome, metrics, story,
-   takeaway, videos, documents) that light up the detail modal as they're filled in. */
-type ProjectItem = ProjectModalData;
-
-const PROJECTS: ProjectItem[] = [
-    {
-        id: 'thailand-2022',
-        title: 'RoboCup Thailand 2022 – Best Hardware Award',
-        year: 2022,
-        blurb:
-            'Custom-designed autonomous rescue robot with hand-soldered PCBs, 3D-printed chassis, and advanced sensor arrays. Competed against 20+ countries and won Best Hardware Award for engineering excellence.',
-        images: [
-            '/images/projects/thailand.jpg',
-            '/images/projects/thailand2.jpg',
-        ],
-        tags: ['world-class', 'pcb-design', 'embedded'],
-    },
-    {
-        id: 'sydney-2019',
-        title: 'RoboCup Sydney 2019 – 4th Place Worldwide',
-        year: 2019,
-        blurb:
-            'Led team to 4th place finish at age 15 in virtual rescue simulation category. Programmed multi-agent coordination, A* pathfinding, and triage algorithms.',
-        images: [
-            '/images/projects/sydney.jpg',
-            '/images/projects/sydney2.jpg',
-            '/images/projects/sydney3.jpg',
-            '/images/projects/sydney4.jpg',
-        ],
-        tags: ['multi-agent', 'pathfinding', 'world-class'],
-    },
-    {
-        id: 'robocup-line',
-        title: 'RoboCup – Rescue Line Robot',
-        year: 2023,
-        blurb:
-            'Autonomous line-following with debris avoidance, ramp climbing and victim detection. Custom PCB design, PID control loops. Won 5 of 6 categories at nationals.',
-        images: [
-            '/images/projects/robocup-line.jpg',
-            '/images/projects/robocup-line2.jpg',
-            '/images/projects/robocup-line3.jpg',
-        ],
-        tags: ['robotics', 'embedded', 'pid'],
-    },
-    {
-        id: 'heat-pump',
-        title: 'Industrial Heat Pump – Diagnostic Model',
-        year: 2022,
-        blurb:
-            'Reverse-engineered a 20-ton commercial heat pump from technical drawings. Built functional 1:200 scale model to resolve €50K+ project dispute.',
-        images: [
-            '/images/projects/heat-pump.png',
-            '/images/projects/heat-pump-cad.png',
-            '/images/projects/heat-pump-print.png',
-        ],
-        tags: ['mechanical', 'reverse-engineering', '3d-printing'],
-    },
-];
+import ProjectModal from '@/components/ProjectModal';
+import { PROJECTS, type ProjectItem } from '@/data/projects';
 
 export default function Projects() {
     const sectionRef = React.useRef<HTMLElement | null>(null);
@@ -78,7 +18,7 @@ export default function Projects() {
     React.useEffect(() => {
         const root = sectionRef.current;
         if (!root) return;
-        const cards = Array.from(root.querySelectorAll<HTMLElement>('.proj-card'));
+        const cards = Array.from(root.querySelectorAll<HTMLElement>('.proj-card, .all-tile'));
         const io = new IntersectionObserver(
             (entries) => entries.forEach((en) => en.isIntersecting && en.target.classList.add('in-view')),
             { rootMargin: '0px 0px -10% 0px', threshold: 0.08 }
@@ -241,6 +181,43 @@ export default function Projects() {
                         </article>
                     );
                 })}
+
+                {/* Full-width index tile — same card DNA, links to the /projects
+                    matrix. Sits as its own row so the hand-tuned 2×2 stays intact. */}
+                <a className="all-tile" href="/projects">
+                    <div className="caption">
+                        <span className="index">[{String(PROJECTS.length + 1).padStart(2, '0')}]</span>
+                        <span className="dot" />
+                        <span className="year">INDEX</span>
+                    </div>
+                    <div className="all-tile-body">
+                        <span className="all-tile-label">ALL PROJECTS</span>
+                        <span className="all-tile-hint">THE FULL MATRIX — EVERY BUILD, EVERY YEAR</span>
+                    </div>
+                    <span className="all-tile-corner" aria-hidden="true">
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                            width="28"
+                            height="28"
+                            stroke="white"
+                            fill="none"
+                            strokeWidth="0.75"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                        >
+                            <path d="M4 5 v14" />
+                            <path d="M4 5 h3" />
+                            <path d="M4 19 h3" />
+                            <path d="M20 5 v14" />
+                            <path d="M20 5 h-3" />
+                            <path d="M20 19 h-3" />
+                            <path d="M9 15 L15 9" />
+                            <path d="M15 9 h-4" />
+                            <path d="M15 9 v4" />
+                        </svg>
+                    </span>
+                </a>
             </div>
 
             {/* Bottom anchor */}
@@ -339,6 +316,80 @@ export default function Projects() {
                 }
                 .proj-card:hover::after {
                     opacity: 1;
+                }
+
+                /* ALL PROJECTS index tile — card DNA, one full-width row. */
+                .all-tile {
+                    grid-column: 1 / -1;
+                    position: relative;
+                    display: flex;
+                    flex-direction: column;
+                    border: 1px solid rgba(255, 255, 255, 0.12);
+                    background: rgba(255, 255, 255, 0.03);
+                    text-decoration: none;
+                    opacity: 0;
+                    transition: opacity 250ms ease, border-color 120ms ease,
+                    background 120ms ease;
+                }
+                .all-tile.in-view {
+                    opacity: 1;
+                }
+                .all-tile:hover {
+                    border-color: rgba(255, 255, 255, 0.28);
+                    background: rgba(255, 255, 255, 0.05);
+                }
+
+                .all-tile-body {
+                    display: flex;
+                    align-items: baseline;
+                    justify-content: space-between;
+                    gap: 1.5rem;
+                    flex-wrap: wrap;
+                    padding: clamp(18px, 2vw, 28px) 14px clamp(20px, 2.2vw, 30px);
+                }
+
+                .all-tile-label {
+                    font: 700 clamp(20px, 2rem, 32px) / 1 'Rajdhani', monospace;
+                    color: #fff;
+                    letter-spacing: 0.06em;
+                    text-transform: uppercase;
+                }
+
+                .all-tile-hint {
+                    font: 600 0.6875rem/1 'Rajdhani', monospace;
+                    letter-spacing: 0.16em;
+                    color: rgba(255, 255, 255, 0.4);
+                    text-transform: uppercase;
+                    transition: color 0.25s ease;
+                }
+                .all-tile:hover .all-tile-hint {
+                    color: rgba(255, 255, 255, 0.65);
+                }
+
+                .all-tile-corner {
+                    position: absolute;
+                    top: clamp(6px, 1.5vw, 10px);
+                    right: clamp(8px, 2vw, 12px);
+                    width: clamp(20px, 4vw, 28px);
+                    height: clamp(20px, 4vw, 28px);
+                    pointer-events: none;
+                    opacity: 0;
+                    transform: translate(-4px, 4px) scale(0.92);
+                    transition:
+                            opacity 0.28s ease-out,
+                            transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+                }
+                .all-tile-corner svg {
+                    stroke: rgba(255, 255, 255, 0.92);
+                }
+                .all-tile:hover .all-tile-corner,
+                .all-tile:focus-visible .all-tile-corner {
+                    opacity: 1;
+                    transform: translate(0, 0) scale(1);
+                }
+                .all-tile:focus-visible {
+                    outline: 1px solid rgba(255, 255, 255, 0.9);
+                    outline-offset: 4px;
                 }
 
                 .caption {

@@ -37,6 +37,20 @@ const WHEEL_SMOOTH_TAU_MS = 110;
 const TRACKPAD_DELTA_MAX = 80;
 const TRACKPAD_LATCH_MS = 300;
 
+// EXTERNAL scrolls (scrollbar drag, keyboard, a native step that slipped the
+// hijack) teleport the page in coarse steps we cannot smooth — the user owns
+// the position there. Instead the DRAWN tip glides toward its mapped position
+// with this time-constant, so the line draws smoothly while the page jumps.
+// The wheel path is untouched: our own scrollTo never arms this, so the tip
+// stays hard-locked while wheeling. Steady-state lag during a continuous drag
+// ≈ drag speed × τ (70ms → ~200px at a brisk 3000px/s drag).
+const TIP_CATCHUP_TAU_MS = 70;
+// Hard per-PAINTED-FRAME ceiling on the chase step. The exponential alone can
+// still leap when a stalled frame lets the gap grow (a % of a big gap is big);
+// this bounds every visible frame-to-frame movement outright. 120px/frame ≈
+// 7200px/s at 60fps — faster than any human drag, so the lag stays bounded.
+const TIP_CATCHUP_MAX_STEP = 120;
+
 // ---- Tip-in-viewport mapping ----
 // Where the tip rides in the viewport as you scroll: it ramps 0 → TIP_BAND_TOP
 // over the first TIP_INTRO_VH viewport-heights of scrolling, slides TIP_BAND_TOP
@@ -545,6 +559,13 @@ export function ProgressLine() {
     // last time we saw a trackpad-like delta (fractional / small) — while
     // latched, wheel steps apply instantly with no glide
     const trackpadTsRef = useRef(0);
+    // true while the drawn tip is catching up to an EXTERNAL scroll jump
+    // (scrollbar drag / keyboard) — armed by handleScroll, cleared on arrival
+    const tipCatchupRef = useRef(false);
+    // The exact value of OUR last window.scrollTo — handleScroll uses it to
+    // recognize our own scroll echoes precisely. (A position-diff tolerance
+    // was used before, but it QUANTIZED slow scrollbar drags to ~3px steps.)
+    const selfScrollYRef = useRef<number | null>(null);
 
     // force one imperative redraw even if the tip didn't move (after rebuilds)
     const needsRedrawRef = useRef(true);
@@ -846,6 +867,7 @@ export function ProgressLine() {
             // Stepped mouse: leave the move to the rAF glide below.
             if (!glide) {
                 pageScrollRef.current = page;
+                selfScrollYRef.current = page;
                 window.scrollTo(0, page);
             }
         };
@@ -857,23 +879,25 @@ export function ProgressLine() {
             // one native step slips through) — snap straight back instead.
             if (document.documentElement.hasAttribute('data-rail-hijack')) {
                 if (Math.abs((window.scrollY || 0) - pageScrollRef.current) >= 1) {
+                    selfScrollYRef.current = pageScrollRef.current;
                     window.scrollTo(0, pageScrollRef.current);
                 }
                 return;
             }
-            // Adopt any EXTERNAL movement (scrollbar, keyboard, a native wheel
-            // step that slipped through) as the new truth for BOTH the position
-            // and the glide target — otherwise a leftover target would fight the
-            // user's scrollbar drag. Our own scrollTo reads back equal (within
-            // sub-px browser quantization), so the tolerance skips it and keeps
-            // our fractional precision. The old consumed-once flag desynced when
-            // the browser COALESCED our scroll event with a native one: the next
-            // wheel tick teleported the page back onto the stale track — a jerk.
+            // Our own scrollTo echoes back within browser sub-px quantization of
+            // the exact value we set — skip those. EVERYTHING else (scrollbar
+            // drag, keyboard, a native wheel step that slipped through) adopts
+            // immediately and EXACTLY — no tolerance against the canonical ref,
+            // which used to quantize slow scrollbar drags into visible ~3px
+            // steps. The drawn tip then GLIDES to the new mapped position (see
+            // tipCatchupRef) instead of teleporting with the jump.
             const current = window.scrollY || window.pageYOffset || 0;
-            if (Math.abs(current - pageScrollRef.current) > 2) {
-                pageScrollRef.current = current;
-                targetScrollRef.current = current;
-            }
+            const self = selfScrollYRef.current;
+            if (self !== null && Math.abs(current - self) <= 1) return;
+
+            pageScrollRef.current = current;
+            targetScrollRef.current = current;
+            tipCatchupRef.current = true;
         };
 
         let lastDrawnTip = -1;
@@ -906,6 +930,7 @@ export function ProgressLine() {
                         next = targetScrollRef.current;
                     }
                     pageScrollRef.current = next;
+                    selfScrollYRef.current = next;
                     window.scrollTo(0, next);
                 }
             }
@@ -914,7 +939,40 @@ export function ProgressLine() {
             const vh = window.innerHeight;
 
             const vpPosNow = computeViewportPos(pageY);
-            const tipNow = pageY + vh * vpPosNow;
+            const mappedTip = pageY + vh * vpPosNow;
+
+            // Normally the drawn tip IS the mapped tip (hard lock — same paint
+            // as the page move). After an EXTERNAL jump (scrollbar/keyboard)
+            // the page teleported in coarse steps, so the drawn tip glides to
+            // the new mapped position instead of stepping with it. The glide
+            // ends (and the lock resumes) the moment it arrives.
+            let tipNow = mappedTip;
+            if (tipCatchupRef.current) {
+                // Pure exponential chase — NO fast-forward clamp. A clamp was
+                // tried ("keep the tip within 3/4 viewport") but it IS a
+                // teleport, and teleports are exactly the bug. The exponential
+                // closes 90% of ANY gap in ~2.3τ (≈160ms) while moving every
+                // frame, so even violent drags read as one smooth sweep.
+                const diff = mappedTip - tipYRef.current;
+                // dt capped at ~2 frames for THIS easing: a stalled frame with
+                // raw dt would spike alpha toward 1 and turn the smooth chase
+                // into a leap — the exact artifact we're removing. Capping
+                // trades a hair of convergence speed during stalls for
+                // guaranteed gentle per-frame motion.
+                const alpha = reduceMotionMq.matches
+                    ? 1
+                    : 1 - Math.exp(-Math.min(dt, 33) / TIP_CATCHUP_TAU_MS);
+                if (Math.abs(diff) < 0.5 || alpha >= 1) {
+                    tipCatchupRef.current = false;
+                } else {
+                    const step = clamp(
+                        diff * alpha,
+                        -TIP_CATCHUP_MAX_STEP,
+                        TIP_CATCHUP_MAX_STEP
+                    );
+                    tipNow = tipYRef.current + step;
+                }
+            }
 
             // Draw ONLY when the tip actually moved (or a rebuild queued a redraw)
             // so an idle page costs nothing. rAF runs pre-paint, so the imperative

@@ -355,11 +355,31 @@ export const linePathConfig: PathSegment[] = [
         sectionNumber: 10,
     },
 
-    // 4. CROSS HORIZONTALLY from RIGHT to LEFT (SLOW SCROLL)
-
-    // 5. Go down on LEFT side
+    // Transition into the circuit board (stays RIGHT)
     {
         from: 'recognition-under-right',
+        to: 'circuit-top',
+        type: 'vertical',
+        sectionNumber: 10,
+    },
+
+    // ============================================
+    // SECTION 7 CONTENT: CIRCUIT BOARD (How I work)
+    // The journey line IS the board's bus — it runs straight down the right
+    // edge while branch traces (drawn by the section itself) fan out to the
+    // principle "components". No crossing here by design: a quiet vertical
+    // beat between the press and contact crossings, alternation untouched.
+    // ============================================
+    {
+        from: 'circuit-top',
+        to: 'circuit-bottom',
+        type: 'vertical',
+        sectionNumber: 10,
+    },
+
+    // Transition to the contact title (stays RIGHT)
+    {
+        from: 'circuit-bottom',
         to: 'cft-start-right-top',
         type: 'vertical',
         sectionNumber: 10,

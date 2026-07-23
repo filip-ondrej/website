@@ -439,13 +439,15 @@ export default function ScrollVideo({
                 .close-btn {
                     /* Anchored to the modal's top-right corner (the modal is fixed
                        inset:0, so this is effectively the screen corner). Always on
-                       screen, independent of the video's size. */
+                       screen, independent of the video's size.
+                       vmin clamps: 44px at the 900px reference, shrinks with a
+                       scaled-down window (matches the press lightbox X). */
                     position: absolute;
-                    top: 20px;
-                    right: 20px;
+                    top: clamp(12px, 2.2vmin, 20px);
+                    right: clamp(12px, 2.2vmin, 20px);
                     z-index: 1;
-                    width: 44px;
-                    height: 44px;
+                    width: clamp(32px, 4.9vmin, 44px);
+                    height: clamp(32px, 4.9vmin, 44px);
                     background: rgba(0, 0, 0, 0.7);
                     border: 1px solid rgba(255, 255, 255, 0.2);
                     cursor: pointer;
@@ -464,7 +466,7 @@ export default function ScrollVideo({
 
                 .close-line {
                     position: absolute;
-                    width: 20px;
+                    width: clamp(15px, 2.2vmin, 20px);
                     height: 2px;
                     background: rgba(255, 255, 255, 0.9);
                     transition: background 0.3s ease;

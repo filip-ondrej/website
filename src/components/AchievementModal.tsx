@@ -1014,11 +1014,7 @@ export default function AchievementModal({data, isOpen, onClose}: Props) {
                 /* STAKES SECTION */
                 .stakes-section {
                     padding: clamp(30px, 4vmin, 50px) 0;
-                    background: linear-gradient(
-                            to bottom,
-                            rgba(255, 255, 255, 0.02) 0%,
-                            transparent 100%
-                    );
+                    background: transparent;
                 }
 
                 .stakes-container {
@@ -1521,8 +1517,11 @@ export default function AchievementModal({data, isOpen, onClose}: Props) {
                     transform: translateY(0);
                 }
 
-                /* MOBILE - When modal gets too small, stack progress panel */
-                @media (max-width: 768px) or (max-height: 600px) {
+                /* MOBILE — real phones only. Was "or (max-height: 600px)", which also
+                   fired on scaled-down DESKTOP windows and broke the header into rows
+                   (title/close in wrong lanes). The vmin clamps already handle small
+                   windows; stacking is a phone-layout concern (mobile redo later). */
+                @media (max-width: 480px) {
                     .progress-system {
                         grid-template-columns: 1fr;
                         grid-template-rows: auto auto auto;

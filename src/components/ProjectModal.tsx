@@ -192,9 +192,7 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                 <div className="progress-system">
                     <div className="progress-bar" style={{ width: `${scrollProgress * 100}%` }} />
 
-                    <button ref={closeBtnRef} className="close-btn-panel" onClick={onClose} aria-label="Close">
-                        <div className="close-icon"><span /><span /></div>
-                    </button>
+                    <div className="panel-left" />
 
                     <div className="section-dots">
                         {sections.map((s, i) => (
@@ -209,6 +207,10 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                             </button>
                         ))}
                     </div>
+
+                    <button ref={closeBtnRef} className="close-btn-panel" onClick={onClose} aria-label="Close">
+                        <div className="close-icon"><span /><span /></div>
+                    </button>
                 </div>
 
                 {/* HERO — image gallery */}
@@ -435,17 +437,19 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    padding: 20px;
+                    padding: clamp(12px, 2vh, 24px);
                     animation: fadeIn 0.3s ease-out;
+                    overflow: hidden;
                 }
 
                 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
+                /* Same square + vmin scaling system as the achievement modal, so all
+                   three modals are one size and shrink together with the window. */
                 .project-modal-container {
-                    width: min(85vw, 85vh);
-                    height: min(85vw, 85vh);
-                    max-width: 900px;
-                    max-height: 900px;
+                    width: min(90vmin, 900px);
+                    height: min(90vmin, 900px);
+                    aspect-ratio: 1 / 1;
                     background: #000;
                     border: 1px solid rgba(255, 255, 255, 0.1);
                     overflow-y: auto;
@@ -464,7 +468,7 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                     to { opacity: 1; transform: translateY(0); }
                 }
 
-                /* ===== Sticky progress header ===== */
+                /* ===== Sticky progress header — one row at every window size ===== */
                 .progress-system {
                     position: sticky;
                     top: 0;
@@ -474,6 +478,12 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                     background: rgba(0, 0, 0, 0.95);
                     backdrop-filter: blur(10px);
                     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+                    display: grid;
+                    grid-template-columns: 1fr auto 1fr;
+                    align-items: center;
+                    padding: 0 clamp(12px, 2vmin, 20px);
+                    height: clamp(50px, 7vmin, 60px);
+                    overflow: hidden;
                 }
 
                 .progress-bar {
@@ -485,29 +495,34 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                     transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
                 }
 
+                .panel-left {
+                    height: 100%;
+                }
+
                 .close-btn-panel {
-                    position: absolute;
-                    top: 50%;
-                    right: 20px;
-                    transform: translateY(-50%);
-                    width: 32px;
-                    height: 32px;
+                    width: clamp(28px, 4vmin, 32px);
+                    height: clamp(28px, 4vmin, 32px);
                     background: transparent;
                     border: 1px solid rgba(255, 255, 255, 0.2);
                     cursor: pointer;
                     transition: border-color 0.3s cubic-bezier(0.16, 1, 0.3, 1), transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
                     overflow: hidden;
-                    z-index: 2;
+                    justify-self: end;
                 }
 
                 .close-btn-panel:hover,
                 .close-btn-panel:focus-visible {
                     border-color: rgba(255, 255, 255, 0.8);
-                    transform: translateY(-50%) rotate(90deg);
+                    transform: rotate(90deg);
                     outline: none;
                 }
 
-                .close-icon { position: relative; width: 14px; height: 14px; margin: auto; }
+                .close-icon {
+                    position: relative;
+                    width: clamp(12px, 1.8vmin, 14px);
+                    height: clamp(12px, 1.8vmin, 14px);
+                    margin: auto;
+                }
                 .close-icon span {
                     position: absolute;
                     top: 50%;
@@ -524,10 +539,10 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
 
                 .section-dots {
                     display: flex;
-                    gap: 28px;
+                    gap: clamp(16px, 3vmin, 28px);
                     justify-content: center;
-                    padding: 14px 20px;
-                    flex-wrap: wrap;
+                    align-items: center;
+                    transform: translateY(2px);
                 }
 
                 .section-dot {
@@ -535,11 +550,11 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                     background: transparent;
                     border: none;
                     cursor: pointer;
-                    padding: 8px;
+                    padding: clamp(6px, 1vmin, 8px);
                     display: flex;
                     flex-direction: column;
                     align-items: center;
-                    gap: 8px;
+                    gap: clamp(6px, 1vmin, 8px);
                     transition: transform 0.3s ease;
                 }
 
@@ -547,8 +562,8 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                 .section-dot:focus-visible { transform: translateY(-2px); outline: none; }
 
                 .section-dot-inner {
-                    width: 10px;
-                    height: 10px;
+                    width: clamp(8px, 1.2vmin, 10px);
+                    height: clamp(8px, 1.2vmin, 10px);
                     background: rgba(255, 255, 255, 0.2);
                     border: 2px solid rgba(255, 255, 255, 0.4);
                     border-radius: 50%;
@@ -569,7 +584,7 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                 }
 
                 .section-label {
-                    font: 400 10px/1 'Rajdhani', monospace;
+                    font: 400 clamp(8px, 1.2vmin, 10px)/1 'Rajdhani', monospace;
                     letter-spacing: 0.12em;
                     text-transform: uppercase;
                     color: rgba(255, 255, 255, 0.5);
@@ -621,7 +636,7 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                     top: 0;
                     bottom: 0;
                     z-index: 4;
-                    width: 70px;
+                    width: clamp(44px, 7.8vmin, 70px);
                     display: flex;
                     align-items: center;
                     background: transparent;
@@ -630,13 +645,13 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                     cursor: pointer;
                     transition: color 0.3s cubic-bezier(0.23, 1, 0.32, 1);
                 }
-                .gallery-prev { left: 0; justify-content: flex-start; padding-left: clamp(12px, 1.25vw, 1.125rem); }
-                .gallery-next { right: 0; justify-content: flex-end; padding-right: clamp(12px, 1.25vw, 1.125rem); }
+                .gallery-prev { left: 0; justify-content: flex-start; padding-left: clamp(10px, 2vmin, 18px); }
+                .gallery-next { right: 0; justify-content: flex-end; padding-right: clamp(10px, 2vmin, 18px); }
                 .gallery-arrow:hover,
                 .gallery-arrow:focus-visible { color: rgba(255, 255, 255, 0.95); outline: none; }
                 .gallery-arrow svg {
-                    width: 20px;
-                    height: 160px;
+                    width: clamp(14px, 2.3vmin, 20px);
+                    height: clamp(110px, 17.8vmin, 160px);
                     stroke-width: 1.5px;
                     transition: transform 0.3s cubic-bezier(0.23, 1, 0.32, 1), stroke-width 0.3s cubic-bezier(0.23, 1, 0.32, 1);
                 }
@@ -649,16 +664,16 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
 
                 .gallery-dots {
                     position: absolute;
-                    top: 16px;
+                    top: clamp(10px, 1.8vmin, 16px);
                     left: 50%;
                     transform: translateX(-50%);
                     display: flex;
-                    gap: 8px;
+                    gap: clamp(6px, 0.9vmin, 8px);
                     z-index: 4;
                 }
                 .gallery-dot {
-                    width: 8px;
-                    height: 8px;
+                    width: clamp(6px, 0.9vmin, 8px);
+                    height: clamp(6px, 0.9vmin, 8px);
                     border-radius: 50%;
                     background: rgba(255, 255, 255, 0.25);
                     border: 1px solid rgba(255, 255, 255, 0.4);
@@ -678,7 +693,10 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                 .hero-content {
                     position: relative;
                     z-index: 2;
-                    padding: 60px;
+                    padding: clamp(30px, 5vmin, 60px);
+                    /* extra bottom clearance so a wrapped title/hook never collides
+                       with the scroll indicator overlapping the hero's bottom edge */
+                    padding-bottom: clamp(48px, 8vmin, 72px);
                     width: 100%;
                     pointer-events: none;
                 }
@@ -686,14 +704,14 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                 .hero-meta {
                     display: flex;
                     align-items: center;
-                    gap: 8px;
-                    margin-bottom: 16px;
+                    gap: clamp(6px, 1vmin, 8px);
+                    margin-bottom: clamp(10px, 1.8vmin, 16px);
                     opacity: 0;
                     animation: fadeInUp 0.6s 0.2s ease forwards;
                     flex-wrap: wrap;
                 }
                 .meta-item {
-                    font: 400 11px/1 'Rajdhani', monospace;
+                    font: 400 clamp(9px, 1.3vmin, 11px)/1 'Rajdhani', monospace;
                     letter-spacing: 0.15em;
                     text-transform: uppercase;
                     color: rgba(255, 255, 255, 0.6);
@@ -701,7 +719,10 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                 .meta-divider { color: rgba(255, 255, 255, 0.2); }
 
                 .hero-title {
-                    font: 700 clamp(30px, 5vw, min(56px, 9vh))/1.05 'Rajdhani', monospace;
+                    /* vmin-tracked so it shrinks with the modal (was vw/vh-coupled,
+                       which froze or blew up on scaled desktop windows).
+                       6.25vmin = 56px at the 900px reference modal — no-op @1440x900. */
+                    font: 700 clamp(26px, 6.25vmin, 56px)/1.05 'Rajdhani', monospace;
                     color: #fff;
                     margin: 0;
                     letter-spacing: -0.02em;
@@ -712,9 +733,9 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                 .title-word { display: inline-block; position: relative; }
 
                 .hero-hook {
-                    font: 400 clamp(15px, 2vw, 19px)/1.5 'Rajdhani', monospace;
+                    font: 400 clamp(13px, 2.1vmin, 19px)/1.5 'Rajdhani', monospace;
                     color: rgba(255, 255, 255, 0.88);
-                    margin: 14px 0 0 0;
+                    margin: clamp(10px, 1.6vmin, 14px) 0 0 0;
                     max-width: 620px;
                     opacity: 0;
                     animation: fadeInUp 0.6s 0.4s ease forwards;
@@ -722,7 +743,7 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
 
                 .scroll-indicator {
                     position: absolute;
-                    bottom: -15px;
+                    bottom: clamp(-10px, -1.5vmin, -15px);
                     left: 0;
                     right: 0;
                     margin: 0 auto;
@@ -734,16 +755,16 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                     opacity: 0;
                     animation: fadeInUp 0.8s 0.8s ease forwards;
                     transition: transform 0.3s ease;
-                    padding: 20px;
+                    padding: clamp(15px, 2.5vmin, 20px);
                     display: flex;
                     flex-direction: column;
                     align-items: center;
-                    gap: 8px;
+                    gap: clamp(6px, 1vmin, 8px);
                 }
                 .scroll-indicator:hover,
                 .scroll-indicator:focus-visible { transform: translateY(4px); outline: none; }
                 .scroll-text {
-                    font: 400 13px/1 'Rajdhani', monospace;
+                    font: 400 clamp(10px, 1.5vmin, 13px)/1 'Rajdhani', monospace;
                     letter-spacing: 0.12em;
                     text-transform: uppercase;
                     color: rgba(255, 255, 255, 0.7);
@@ -755,6 +776,9 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                     stroke: rgba(255, 255, 255, 0.5);
                     transition: stroke 0.3s ease;
                     animation: scrollBounce 2s ease-in-out infinite;
+                    display: block;
+                    width: clamp(20px, 3vmin, 24px);
+                    height: clamp(20px, 3vmin, 24px);
                 }
                 .scroll-indicator:hover .scroll-arrow,
                 .scroll-indicator:focus-visible .scroll-arrow { stroke: rgba(255, 255, 255, 0.9); }
@@ -773,9 +797,9 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                 .section-header {
                     display: flex;
                     align-items: center;
-                    gap: 16px;
-                    margin: 0 auto 40px auto;
-                    padding: 0 60px 16px 60px;
+                    gap: clamp(12px, 2vmin, 16px);
+                    margin: 0 auto clamp(30px, 4vmin, 40px) auto;
+                    padding: 0 clamp(30px, 4vmin, 60px) clamp(12px, 2vmin, 16px) clamp(30px, 4vmin, 60px);
                     max-width: 760px;
                     width: 100%;
                     position: relative;
@@ -784,52 +808,52 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                     content: '';
                     position: absolute;
                     bottom: 0;
-                    left: 60px;
-                    right: 60px;
+                    left: 30px;
+                    right: 30px;
                     height: 1px;
                     background: rgba(255, 255, 255, 0.2);
                 }
                 .section-number {
-                    font: 700 32px/1 'Rajdhani', monospace;
+                    font: 700 clamp(24px, 3.5vmin, 32px)/1 'Rajdhani', monospace;
                     color: rgba(255, 255, 255, 0.5);
                     letter-spacing: -0.02em;
                 }
                 .section-title {
-                    font: 500 11px/1 'Rajdhani', monospace;
+                    font: 500 clamp(9px, 1.3vmin, 11px)/1 'Rajdhani', monospace;
                     letter-spacing: 0.2em;
                     text-transform: uppercase;
                     color: rgba(255, 255, 255, 0.7);
                 }
 
                 /* ===== Overview ===== */
-                .overview-section { padding: 60px 0 20px; background: rgba(255, 255, 255, 0.01); }
-                .overview-content { max-width: 640px; margin: 0 auto; padding: 0 60px; }
+                .overview-section { padding: clamp(40px, 6.7vmin, 60px) 0 clamp(15px, 2.2vmin, 20px); background: transparent; }
+                .overview-content { max-width: 640px; margin: 0 auto; padding: 0 clamp(30px, 4vmin, 60px); }
                 .overview-text {
-                    font: 400 clamp(16px, 2vw, 18px)/1.7 'Rajdhani', monospace;
+                    font: 400 clamp(15px, 2vmin, 18px)/1.7 'Rajdhani', monospace;
                     color: rgba(255, 255, 255, 0.82);
                     margin: 0;
                 }
                 .metrics-grid {
                     display: flex;
                     flex-wrap: wrap;
-                    gap: 12px;
-                    margin-top: 32px;
+                    gap: clamp(9px, 1.4vmin, 12px);
+                    margin-top: clamp(22px, 3.6vmin, 32px);
                 }
                 .metric-badge {
-                    padding: 12px 18px;
+                    padding: clamp(9px, 1.4vmin, 12px) clamp(13px, 2vmin, 18px);
                     background: rgba(255, 255, 255, 0.03);
                     border: 1px solid rgba(255, 255, 255, 0.12);
-                    font: 600 clamp(12px, 1.6vw, 14px)/1 'Rajdhani', monospace;
+                    font: 600 clamp(11px, 1.6vmin, 14px)/1 'Rajdhani', monospace;
                     letter-spacing: 0.06em;
                     color: rgba(255, 255, 255, 0.9);
                     text-transform: uppercase;
                 }
-                .overview-tags { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+                .overview-tags { display: flex; flex-wrap: wrap; gap: clamp(9px, 1.4vmin, 12px); margin-top: clamp(22px, 3.6vmin, 32px); }
                 .tag {
-                    padding: 6px 12px;
+                    padding: clamp(5px, 0.8vmin, 6px) clamp(10px, 1.5vmin, 12px);
                     background: transparent;
                     border: 1px solid rgba(255, 255, 255, 0.1);
-                    font: 400 11px/1 'Rajdhani', monospace;
+                    font: 400 clamp(9px, 1.3vmin, 11px)/1 'Rajdhani', monospace;
                     color: rgba(255, 255, 255, 0.5);
                     letter-spacing: 0.08em;
                     text-transform: lowercase;
@@ -838,89 +862,87 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                 .tag:hover { color: rgba(255, 255, 255, 0.8); border-color: rgba(255, 255, 255, 0.3); }
 
                 /* ===== Stakes ===== */
-                .stakes-section { padding: 40px 0; }
+                .stakes-section { padding: clamp(27px, 4.4vmin, 40px) 0; background: transparent; }
                 .stakes-container {
                     display: grid;
                     grid-template-columns: 1fr auto 1fr;
-                    gap: 24px;
+                    gap: clamp(16px, 2.7vmin, 24px);
                     align-items: stretch;
                     max-width: 760px;
                     margin: 0 auto;
-                    padding: 0 60px;
+                    padding: 0 clamp(30px, 4vmin, 60px);
                 }
                 .stake-card {
-                    padding: 24px;
+                    padding: clamp(16px, 2.7vmin, 24px);
                     background: rgba(255, 255, 255, 0.04);
                     border: 1px solid rgba(255, 255, 255, 0.14);
                     transition: border-color 0.4s ease, transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
                 }
                 .stake-card:hover { border-color: rgba(255, 255, 255, 0.4); transform: translateY(-3px); }
                 .stake-label {
-                    font: 600 11px/1 'Rajdhani', monospace;
+                    font: 600 clamp(9px, 1.3vmin, 11px)/1 'Rajdhani', monospace;
                     letter-spacing: 0.2em;
                     text-transform: uppercase;
                     color: rgba(255, 255, 255, 0.7);
-                    margin-bottom: 12px;
+                    margin-bottom: clamp(8px, 1.4vmin, 12px);
                 }
                 .stake-card p {
-                    font: 400 clamp(14px, 1.8vw, 16px)/1.6 'Rajdhani', monospace;
+                    font: 400 clamp(14px, 1.8vmin, 16px)/1.6 'Rajdhani', monospace;
                     color: rgba(255, 255, 255, 0.88);
                     margin: 0;
                 }
-                .stakes-divider { display: flex; align-items: center; gap: 10px; }
-                .divider-line { width: 16px; height: 1px; background: rgba(255, 255, 255, 0.15); }
-                .divider-arrow { font-size: 18px; color: rgba(255, 255, 255, 0.35); }
+                .stakes-divider { display: flex; align-items: center; gap: clamp(8px, 1.2vmin, 10px); }
+                .divider-line { width: clamp(12px, 1.8vmin, 16px); height: 1px; background: rgba(255, 255, 255, 0.15); }
+                .divider-arrow { font-size: clamp(14px, 2vmin, 18px); color: rgba(255, 255, 255, 0.35); }
 
-                /* ===== Story (markdown) ===== */
-                .story-content { padding: 50px 0; }
+                /* ===== Story (markdown) — one centered column, same as the other modals ===== */
+                .story-content { padding: clamp(30px, 4vmin, 50px) 0; }
                 .story-h2, .story-h3, .story-p, .story-quote, .story-list, .story-media {
-                    max-width: 560px;
+                    max-width: min(550px, 90%);
                     margin-left: auto;
                     margin-right: auto;
-                    padding-left: 60px;
-                    padding-right: 60px;
                 }
                 .story-h2 {
-                    font: 700 clamp(22px, 3.5vw, 30px)/1.2 'Rajdhani', monospace;
+                    font: 700 clamp(22px, 3.4vmin, 30px)/1.2 'Rajdhani', monospace;
                     color: #fff;
-                    margin: 48px auto 20px auto;
+                    margin: clamp(34px, 5.4vmin, 48px) auto clamp(15px, 2.3vmin, 20px) auto;
                 }
                 .story-h3 {
-                    font: 600 clamp(18px, 2.5vw, 22px)/1.3 'Rajdhani', monospace;
+                    font: 600 clamp(17px, 2.5vmin, 22px)/1.3 'Rajdhani', monospace;
                     color: rgba(255, 255, 255, 0.9);
-                    margin: 36px auto 14px auto;
+                    margin: clamp(26px, 4vmin, 36px) auto clamp(10px, 1.6vmin, 14px) auto;
                 }
                 .story-p {
-                    font: 400 clamp(15px, 1.9vw, 17px)/1.75 'Rajdhani', monospace;
+                    font: 400 clamp(15px, 1.9vmin, 17px)/1.75 'Rajdhani', monospace;
                     color: rgba(255, 255, 255, 0.75);
-                    margin: 0 auto 18px auto;
+                    margin: 0 auto clamp(13px, 2vmin, 18px) auto;
                 }
-                .story-list { margin: 0 auto 24px auto; padding-left: 84px; list-style-position: outside; }
+                .story-list { margin: 0 auto clamp(17px, 2.7vmin, 24px) auto; padding-left: clamp(1rem, 2.5vmin, 1.25rem); list-style-position: outside; }
                 .story-list.ordered { list-style-type: decimal; }
                 .story-list:not(.ordered) { list-style-type: disc; }
                 .story-li {
-                    margin: 6px 0;
+                    margin: clamp(4px, 0.7vmin, 6px) 0;
                     color: rgba(255, 255, 255, 0.75);
-                    font: 400 clamp(15px, 1.9vw, 17px)/1.75 'Rajdhani', monospace;
+                    font: 400 clamp(15px, 1.9vmin, 17px)/1.75 'Rajdhani', monospace;
                 }
                 .story-quote {
-                    margin: 40px auto;
-                    padding: 28px 32px;
+                    margin: clamp(28px, 4.4vmin, 40px) auto;
+                    padding: clamp(20px, 3.1vmin, 28px) clamp(22px, 3.6vmin, 32px);
                     position: relative;
                     border: 1px solid rgba(255, 255, 255, 0.1);
                 }
                 .quote-mark {
                     position: absolute;
-                    top: -10px;
-                    left: 20px;
-                    font-size: 40px;
+                    top: clamp(-8px, -1.2vmin, -10px);
+                    left: clamp(15px, 2.2vmin, 20px);
+                    font-size: clamp(30px, 4.4vmin, 40px);
                     color: rgba(255, 255, 255, 0.12);
                     font-family: Georgia, serif;
                     background: #000;
-                    padding: 0 10px;
+                    padding: 0 clamp(8px, 1.2vmin, 10px);
                 }
                 .story-quote p {
-                    font: 500 clamp(16px, 2.2vw, 19px)/1.5 'Rajdhani', monospace;
+                    font: 500 clamp(16px, 2.1vmin, 19px)/1.5 'Rajdhani', monospace;
                     font-style: italic;
                     color: rgba(255, 255, 255, 0.82);
                     margin: 0;
@@ -928,9 +950,9 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                 .story-emphasis { color: #fff; font-weight: 600; }
 
                 /* ===== Media (images/videos embedded or standalone) ===== */
-                .media-section { padding: 40px 0; }
-                .media-list { max-width: 760px; margin: 0 auto; padding: 0 60px; display: flex; flex-direction: column; gap: 32px; }
-                .story-media { margin: 40px auto; }
+                .media-section { padding: clamp(27px, 4.4vmin, 40px) 0; }
+                .media-list { max-width: 760px; margin: 0 auto; padding: 0 clamp(30px, 4vmin, 60px); display: flex; flex-direction: column; gap: clamp(22px, 3.6vmin, 32px); }
+                .story-media { margin: clamp(28px, 4.4vmin, 40px) auto; }
                 .story-media img,
                 .story-media video {
                     display: block;
@@ -940,8 +962,8 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
                     background: #000;
                 }
                 .story-media figcaption {
-                    padding: 10px 4px 0;
-                    font: 400 clamp(10px, 1.4vw, 12px)/1.4 'Rajdhani', monospace;
+                    padding: clamp(8px, 1.2vmin, 10px) 4px 0;
+                    font: 400 clamp(10px, 1.4vmin, 12px)/1.4 'Rajdhani', monospace;
                     color: rgba(255, 255, 255, 0.5);
                     letter-spacing: 0.06em;
                     text-transform: uppercase;
@@ -950,12 +972,12 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
 
                 /* ===== Takeaway ===== */
                 .takeaway-section {
-                    padding: 50px 60px;
+                    padding: clamp(30px, 5.5vmin, 50px) clamp(30px, 4vmin, 60px);
                     text-align: center;
                     border-top: 1px solid rgba(255, 255, 255, 0.06);
                 }
                 .takeaway-text {
-                    font: 500 clamp(18px, 3vw, 26px)/1.5 'Rajdhani', monospace;
+                    font: 500 clamp(18px, 2.9vmin, 26px)/1.5 'Rajdhani', monospace;
                     color: rgba(255, 255, 255, 0.9);
                     margin: 0 auto;
                     max-width: 620px;
@@ -963,23 +985,23 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
 
                 /* ===== Footer (documents) ===== */
                 .footer-section {
-                    padding: 40px 60px;
+                    padding: clamp(27px, 4.4vmin, 40px) clamp(30px, 4vmin, 60px);
                     border-top: 1px solid rgba(255, 255, 255, 0.05);
                     background: rgba(0, 0, 0, 0.5);
                     display: flex;
                     flex-wrap: wrap;
-                    gap: 16px;
+                    gap: clamp(12px, 1.8vmin, 16px);
                     justify-content: center;
                 }
                 .doc-button {
                     display: inline-flex;
                     align-items: center;
-                    gap: 12px;
-                    padding: 16px 28px;
+                    gap: clamp(8px, 1.4vmin, 12px);
+                    padding: clamp(12px, 1.8vmin, 16px) clamp(20px, 3.1vmin, 28px);
                     background: transparent;
                     border: 1px solid rgba(255, 255, 255, 0.3);
                     color: rgba(255, 255, 255, 0.9);
-                    font: 600 13px/1 'Rajdhani', monospace;
+                    font: 600 clamp(11px, 1.5vmin, 13px)/1 'Rajdhani', monospace;
                     letter-spacing: 0.12em;
                     text-transform: uppercase;
                     text-decoration: none;
@@ -1006,25 +1028,23 @@ export default function ProjectModal({ data, isOpen, onClose, startIndex = 0 }: 
 
                 .project-modal-container::-webkit-scrollbar { display: none; }
 
-                @media (max-width: 768px) {
-                    .project-modal-container {
-                        width: min(95vw, 95vh);
-                        height: min(95vw, 95vh);
-                        max-width: none;
-                        max-height: none;
+                /* MOBILE — real phones only (was 768px, which also caught scaled-down
+                   desktop windows and flipped the hero portrait / restyled the header).
+                   The vmin clamps handle small windows; mobile redo comes later. */
+                @media (max-width: 480px) {
+                    .progress-system {
+                        grid-template-columns: 1fr;
+                        grid-template-rows: auto auto;
+                        padding: clamp(10px, 1.5vmin, 12px);
+                        gap: clamp(10px, 1.5vmin, 12px);
+                        height: auto;
                     }
-                    .hero-section { aspect-ratio: 3 / 4; }
-                    .hero-content { padding: 40px 24px; }
-                    .section-header { padding: 0 24px 16px 24px; }
-                    .section-header::after { left: 24px; right: 24px; }
-                    .overview-content,
-                    .media-list { padding: 0 24px; }
-                    .story-h2, .story-h3, .story-p, .story-quote, .story-media { padding-left: 24px; padding-right: 24px; }
-                    .story-list { padding-left: 48px; }
-                    .stakes-container { grid-template-columns: 1fr; padding: 0 24px; }
+                    .panel-left { display: none; }
+                    .close-btn-panel { justify-self: center; }
+                    .stakes-container { grid-template-columns: 1fr; }
                     .stakes-divider { transform: rotate(90deg); justify-self: center; }
-                    .section-dots { gap: 18px; padding: 16px; }
-                    .gallery-arrow { width: 54px; }
+                    .section-label { display: none; }
+                    .project-modal-backdrop { padding: 6px; }
                 }
 
                 @media (prefers-reduced-motion: reduce) {

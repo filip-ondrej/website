@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { LineAnchor } from '@/components/00_LineAnchor';
+import { useScrollLock } from '@/lib/useScrollLock';
 
 type VideoItem = {
     id: string;
@@ -250,6 +251,14 @@ export default function Recognition() {
     const backdropRef = React.useRef<HTMLDivElement | null>(null);
     const closeBtnRef = React.useRef<HTMLButtonElement | null>(null);
 
+    // Shared page lock (body overflow hidden + data-scroll-locked so the
+    // ProgressLine wheel engine yields). Replaces the legacy body
+    // position:fixed hack, which collapsed the document height — the spine's
+    // settle observer rebuilt the path against the collapsed page (line
+    // vanished) and the wheel engine's target was left at 0, so the first
+    // scroll after closing teleported back to the top.
+    useScrollLock(isFullscreen);
+
     React.useEffect(() => {
         if (!isFullscreen) return;
 
@@ -275,12 +284,6 @@ export default function Recognition() {
                 }
             }
         };
-
-        // Lock body scroll (preserve page position)
-        const scrollY = window.scrollY;
-        document.body.style.position = 'fixed';
-        document.body.style.top = `-${scrollY}px`;
-        document.body.style.width = '100%';
 
         // A11y: remember what was focused, then move focus into the dialog.
         const previouslyFocused = document.activeElement as HTMLElement | null;
@@ -324,28 +327,8 @@ export default function Recognition() {
 
             // Return focus to whatever opened the modal.
             previouslyFocused?.focus();
-
-            // Reset styles
-            document.body.style.position = '';
-            document.body.style.top = '';
-            document.body.style.width = '';
-
-            // Restore scroll position
-            window.scrollTo(0, scrollY);
-
-            // FORCE the ProgressLine to update by triggering scroll event
-            requestAnimationFrame(() => {
-                window.scrollTo(0, scrollY);
-                window.dispatchEvent(new Event('scroll'));
-                window.dispatchEvent(new Event('resize'));
-
-                // Double-check after another frame
-                requestAnimationFrame(() => {
-                    window.scrollTo(0, scrollY);
-                    window.dispatchEvent(new Event('scroll'));
-                    window.dispatchEvent(new Event('resize'));
-                });
-            });
+            // useScrollLock releases the page; overflow:hidden preserves the
+            // scroll position natively, so no restore/nudge dance is needed.
         };
     }, [isFullscreen, fullscreenVimeoId]);
 
@@ -1032,8 +1015,6 @@ export default function Recognition() {
                         backdropFilter: 'blur(10px)',
                     }}
                     onClick={handleBackdropClick}
-                    onWheel={(e) => e.preventDefault()}
-                    onTouchMove={(e) => e.preventDefault()}
                 >
                     <div className="lightbox-container">
                         <div
@@ -1085,13 +1066,15 @@ export default function Recognition() {
 
                         .recogCloseBtn {
                             /* Screen-corner anchored (the modal is fixed inset:0), so it's
-                               always on-screen and independent of the video's size. */
+                               always on-screen and independent of the video's size.
+                               vmin clamps: 44px at the 900px reference, shrinks with a
+                               scaled-down window like the modal close buttons. */
                             position: absolute;
-                            top: 20px;
-                            right: 20px;
+                            top: clamp(12px, 2.2vmin, 20px);
+                            right: clamp(12px, 2.2vmin, 20px);
                             z-index: 1;
-                            width: 44px;
-                            height: 44px;
+                            width: clamp(32px, 4.9vmin, 44px);
+                            height: clamp(32px, 4.9vmin, 44px);
                             background: rgba(0, 0, 0, 0.7);
                             border: 1px solid rgba(255, 255, 255, 0.2);
                             cursor: pointer;
@@ -1104,7 +1087,7 @@ export default function Recognition() {
 
                         .recogCloseLine {
                             position: absolute;
-                            width: 20px;
+                            width: clamp(15px, 2.2vmin, 20px);
                             height: 2px;
                             background: rgba(255, 255, 255, 0.9);
                             transition: background 0.3s ease;
@@ -1130,14 +1113,6 @@ export default function Recognition() {
                             }
                         }
 
-                        @media (max-width: 768px) {
-                            .recogCloseBtn {
-                                top: 12px;
-                                right: 12px;
-                                width: 40px;
-                                height: 40px;
-                            }
-                        }
                     `}</style>
                 </div>
             )}

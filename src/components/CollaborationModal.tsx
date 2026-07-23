@@ -29,13 +29,16 @@ type Props = {
     caption?: string;
 };
 
+/* Site gold (amber ramp from the title system) — NOT web yellow. */
+const GOLD = '245, 158, 11';
+
 /* ==================== COMPONENT ==================== */
 export default function CollaborationModal({ data, isOpen, onClose, logo, href, caption }: Props) {
     const backdropRef = React.useRef<HTMLDivElement>(null);
     const containerRef = React.useRef<HTMLDivElement>(null);
+    const arrowRef = React.useRef<SVGSVGElement | null>(null);
     const [scrollProgress, setScrollProgress] = React.useState(0);
     const [activeSection, setActiveSection] = React.useState(0);
-    const [isReading, setIsReading] = React.useState(false);
 
     // Shared page lock: body overflow hidden + data-scroll-locked so the
     // ProgressLine wheel engine yields (native scroll inside the modal).
@@ -50,29 +53,6 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
         const words = plain.trim().split(/\s+/).filter(Boolean).length;
         return Math.max(1, Math.ceil(words / wpm));
     }
-
-    /* Track reading state */
-    React.useEffect(() => {
-        if (!isOpen) {
-            setIsReading(false);
-            return;
-        }
-
-        let scrollTimer: NodeJS.Timeout;
-        const handleScroll = () => {
-            setIsReading(true);
-            clearTimeout(scrollTimer);
-            scrollTimer = setTimeout(() => setIsReading(false), 150);
-        };
-
-        const container = containerRef.current;
-        container?.addEventListener('scroll', handleScroll);
-
-        return () => {
-            container?.removeEventListener('scroll', handleScroll);
-            clearTimeout(scrollTimer);
-        };
-    }, [isOpen]);
 
     React.useEffect(() => {
         if (!isOpen) return;
@@ -121,15 +101,15 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
             setScrollProgress(progress);
 
             const sections = [
-                { id: 'hero', index: 0 },
-                { id: 'summary', index: 1 },
-                { id: 'stakes', index: 2 },
-                { id: 'details', index: 3 }
+                { id: 'collab-hero', index: 0 },
+                { id: 'collab-summary', index: 1 },
+                { id: 'collab-stakes', index: 2 },
+                { id: 'collab-details', index: 3 }
             ];
 
             let current = 0;
             sections.forEach(({ id, index }) => {
-                const element = document.getElementById(id);
+                const element = container.querySelector<HTMLElement>(`#${id}`);
                 if (element) {
                     const rect = element.getBoundingClientRect();
                     const containerRect = container.getBoundingClientRect();
@@ -154,7 +134,7 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
             { threshold: 0.05 }
         );
 
-        const sections = container.querySelectorAll('.story-section, .collab-image');
+        const sections = container.querySelectorAll('.story-section, .story-media');
         sections.forEach((section) => observer.observe(section));
 
         container.addEventListener('scroll', handleScroll);
@@ -166,24 +146,133 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
         };
     }, [isOpen]);
 
+    // Arrow bounces once on open / on hero hover (same behavior as the graph modal).
+    const triggerArrowBounce = React.useCallback(() => {
+        const el = arrowRef.current;
+        if (!el) return;
+        el.classList.remove('scroll-arrow-anim');
+        void el.getBoundingClientRect(); // force reflow
+        el.classList.add('scroll-arrow-anim');
+    }, []);
+
+    React.useEffect(() => {
+        if (!isOpen) return;
+        const timeout = setTimeout(() => {
+            triggerArrowBounce();
+        }, 900); // after hero fades in
+        return () => clearTimeout(timeout);
+    }, [isOpen, triggerArrowBounce]);
+
     const handleBackdropClick = (e: React.MouseEvent) => {
         if (e.target === backdropRef.current) onClose();
     };
+
+    // Memoized: the modal re-renders on every scroll tick (progress state), and an
+    // un-memoized ReactMarkdown re-parses + RECREATES its DOM subtree each time —
+    // which detaches the nodes the IntersectionObserver watches, so .story-media
+    // reveals never fire (and the parse itself is wasted work at scroll rate).
+    const storyMarkdown = React.useMemo(() => (
+        <ReactMarkdown
+            components={{
+                h2: ({ children, ...props }) => (
+                    <h2 className="story-h2" {...props}>
+                        <span className="h2-marker">
+                            <svg
+                                className="h2-arrow"
+                                width="20"
+                                height="20"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                            >
+                                <path d="M5 12h14M12 5l7 7-7 7" />
+                            </svg>
+                        </span>
+                        {children}
+                    </h2>
+                ),
+                h3: ({ children, ...props }) => (
+                    <h3 className="story-h3" {...props}>{children}</h3>
+                ),
+                p: ({ children, ...props }) => (
+                    <p className="story-p" {...props}>{children}</p>
+                ),
+                ul: ({ children, ...props }) => (
+                    <ul className="story-list" {...props}>{children}</ul>
+                ),
+                ol: ({ children, ...props }) => (
+                    <ol className="story-list ordered" {...props}>{children}</ol>
+                ),
+                li: ({ children, ...props }) => (
+                    <li className="story-li" {...props}>{children}</li>
+                ),
+                blockquote: ({ children, ...props}) => (
+                    <blockquote className="story-quote" {...props}>
+                        <span className="quote-mark">|</span>
+                        {children}
+                    </blockquote>
+                ),
+                strong: ({ ...props }) => <strong className="story-emphasis" {...props} />,
+                // Media in the story body, all via markdown image syntax:
+                //   ![caption](/images/foo.jpg)            → styled figure
+                //   ![caption](https://vimeo.com/123)     → responsive Vimeo embed
+                //   ![caption](https://youtube.com/watch?v=x | youtu.be/x) → YouTube embed
+                // One convention for pictures AND videos so a collaboration's
+                // media is added/removed by editing its .md file only.
+                img: ({ src, alt }) => {
+                    const url = typeof src === 'string' ? src : '';
+                    const vimeo = url.match(/vimeo\.com\/(\d+)/);
+                    const youtube = url.match(
+                        /(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/
+                    );
+                    if (vimeo || youtube) {
+                        const embedSrc = vimeo
+                            ? `https://player.vimeo.com/video/${vimeo[1]}`
+                            : `https://www.youtube-nocookie.com/embed/${youtube![1]}`;
+                        return (
+                            <span className="story-media">
+                                <iframe
+                                    src={embedSrc}
+                                    title={alt || 'Embedded video'}
+                                    allow="autoplay; fullscreen; picture-in-picture"
+                                    allowFullScreen
+                                    loading="lazy"
+                                />
+                                {alt && <span className="story-media-caption">{alt}</span>}
+                            </span>
+                        );
+                    }
+                    return (
+                        <span className="story-media">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={url} alt={alt || ''} loading="lazy" decoding="async" />
+                            {alt && <span className="story-media-caption">{alt}</span>}
+                        </span>
+                    );
+                },
+            }}
+        >
+            {data?.story ?? ''}
+        </ReactMarkdown>
+    ), [data?.story]);
 
     if (!isOpen || !data) return null;
 
     const readTime = calcReadTimeFromMarkdown(data?.story ?? "");
 
     const sections = [
-        { name: 'Intro', id: 'hero' },
-        { name: 'Summary', id: 'summary' },
-        { name: 'Stakes', id: 'stakes' },
-        { name: 'Details', id: 'details' }
+        { name: 'Intro', id: 'collab-hero' },
+        { name: 'Summary', id: 'collab-summary' },
+        { name: 'Stakes', id: 'collab-stakes' },
+        { name: 'Details', id: 'collab-details' }
     ];
 
     const scrollToSection = (id: string) => {
-        const element = document.getElementById(id);
         const container = containerRef.current;
+        const element = container?.querySelector<HTMLElement>(`#${id}`);
         if (!element || !container) return;
 
         const progressPanel = container.querySelector('.progress-system') as HTMLElement;
@@ -200,25 +289,25 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
     return (
         <div
             ref={backdropRef}
-            className="achievement-modal-backdrop"
+            className="collab-modal-backdrop"
             onClick={handleBackdropClick}
+            role="dialog"
+            aria-modal="true"
+            aria-label={data.name}
         >
-            {/* Reading indicator */}
-            <div className={`reading-indicator ${isReading ? 'active' : ''}`}>
-                <div className="reading-bar" />
-            </div>
-
-            <div ref={containerRef} className="achievement-modal-container">
-                {/* Progress system */}
+            <div ref={containerRef} className="collab-modal-container">
+                {/* Progress system — same 3-col grid as the achievement modal */}
                 <div className="progress-system">
                     <div className="progress-bar" style={{ width: `${scrollProgress * 100}%` }} />
 
-                    <button className="close-btn-panel" onClick={onClose} aria-label="Close">
-                        <div className="close-icon">
-                            <span />
-                            <span />
-                        </div>
-                    </button>
+                    <div className="panel-left">
+                        {caption && (
+                            <div className="type-chip">
+                                <span className="type-dot" />
+                                <span className="type-label">{caption}</span>
+                            </div>
+                        )}
+                    </div>
 
                     <div className="section-dots">
                         {sections.map((section, i) => (
@@ -233,10 +322,17 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                             </button>
                         ))}
                     </div>
+
+                    <button className="close-btn-panel" onClick={onClose} aria-label="Close">
+                        <div className="close-icon">
+                            <span />
+                            <span />
+                        </div>
+                    </button>
                 </div>
 
                 {/* HERO */}
-                <div id="hero" className="hero-section">
+                <div id="collab-hero" className="hero-section" onMouseEnter={triggerArrowBounce}>
                     {data.images && data.images[0] ? (
                         <>
                             <img src={data.images[0]} alt={data.name} className="hero-image" />
@@ -260,15 +356,13 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                     )}
 
                     <div className="hero-content">
-                        {caption && (
-                            <div className="hero-meta">
-                                <span className="meta-item">{caption}</span>
-                                {data.established && <span className="meta-divider">/</span>}
-                                {data.established && <span className="meta-item">{data.established}</span>}
-                                {data.location && <span className="meta-divider">/</span>}
-                                {data.location && <span className="meta-item">{data.location}</span>}
-                            </div>
-                        )}
+                        <div className="hero-meta">
+                            {caption && <span className="meta-item">{caption}</span>}
+                            {caption && data.established && <span className="meta-divider">/</span>}
+                            {data.established && <span className="meta-item">{data.established}</span>}
+                            {(caption || data.established) && data.location && <span className="meta-divider">/</span>}
+                            {data.location && <span className="meta-item">{data.location}</span>}
+                        </div>
 
                         <h1 className="hero-title">
                             <span className="title-word">{data.name}</span>
@@ -279,18 +373,27 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
 
                     <button
                         className="scroll-indicator"
-                        onClick={() => scrollToSection('summary')}
+                        onClick={() => scrollToSection('collab-summary')}
                         aria-label="Scroll to content"
                     >
                         <span className="scroll-text">Read More</span>
-                        <svg className="scroll-arrow" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <svg
+                            ref={arrowRef}
+                            className="scroll-arrow"
+                            width="24"
+                            height="24"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                        >
                             <path d="M12 5v14M19 12l-7 7-7-7" />
                         </svg>
                     </button>
                 </div>
 
                 {/* SUMMARY */}
-                <div id="summary" className="story-section summary-section">
+                <div id="collab-summary" className="story-section summary-section">
                     <div className="section-header">
                         <span className="section-number">01</span>
                         <span className="section-title">SUMMARY</span>
@@ -303,25 +406,25 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                             <div className="summary-info">
                                 {data.name && (
                                     <div className="info-card">
-                                        <div className="info-label">Institution:</div>
+                                        <div className="info-label">Partner</div>
                                         <div className="info-value">{data.name}</div>
                                     </div>
                                 )}
                                 {data.duration && (
                                     <div className="info-card">
-                                        <div className="info-label">Duration:</div>
+                                        <div className="info-label">Duration</div>
                                         <div className="info-value">{data.duration}</div>
                                     </div>
                                 )}
                                 {data.location && (
                                     <div className="info-card">
-                                        <div className="info-label">Location:</div>
+                                        <div className="info-label">Location</div>
                                         <div className="info-value">{data.location}</div>
                                     </div>
                                 )}
                                 {data.role && (
                                     <div className="info-card">
-                                        <div className="info-label">Research Focus:</div>
+                                        <div className="info-label">Role</div>
                                         <div className="info-value">{data.role}</div>
                                     </div>
                                 )}
@@ -332,7 +435,7 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
 
                 {/* STAKES */}
                 {data.outcomes && data.outcomes.length > 0 && (
-                    <div id="stakes" className="story-section stakes-section">
+                    <div id="collab-stakes" className="story-section stakes-section">
                         <div className="section-header">
                             <span className="section-number">02</span>
                             <span className="section-title">THE STAKES</span>
@@ -350,7 +453,7 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                 )}
 
                 {/* DETAILS */}
-                <div id="details" className="story-section story-content">
+                <div id="collab-details" className="story-section story-content">
                     <div className="section-header">
                         <div>
                             <span className="section-number">03</span>
@@ -365,77 +468,7 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                         </div>
                     </div>
 
-                    <ReactMarkdown
-                        components={{
-                            h2: ({ children, ...props }) => (
-                                <h2 className="story-h2" {...props}>
-                                    <span className="h2-marker" />
-                                    {children}
-                                </h2>
-                            ),
-                            h3: ({ children, ...props }) => (
-                                <h3 className="story-h3" {...props}>{children}</h3>
-                            ),
-                            p: ({ children, ...props }) => (
-                                <p className="story-p" {...props}>{children}</p>
-                            ),
-                            ul: ({ children, ...props }) => (
-                                <ul className="story-list" {...props}>{children}</ul>
-                            ),
-                            ol: ({ children, ...props }) => (
-                                <ol className="story-list ordered" {...props}>{children}</ol>
-                            ),
-                            li: ({ children, ...props }) => (
-                                <li className="story-li" {...props}>{children}</li>
-                            ),
-                            blockquote: ({ children, ...props}) => (
-                                <blockquote className="story-quote" {...props}>
-                                    <span className="quote-mark">|</span>
-                                    {children}
-                                </blockquote>
-                            ),
-                            strong: ({ ...props }) => <strong className="story-emphasis" {...props} />,
-                            // Media in the story body, all via markdown image syntax:
-                            //   ![caption](/images/foo.jpg)            → styled figure
-                            //   ![caption](https://vimeo.com/123)     → responsive Vimeo embed
-                            //   ![caption](https://youtube.com/watch?v=x | youtu.be/x) → YouTube embed
-                            // One convention for pictures AND videos so a collaboration's
-                            // media is added/removed by editing its .md file only.
-                            img: ({ src, alt }) => {
-                                const url = typeof src === 'string' ? src : '';
-                                const vimeo = url.match(/vimeo\.com\/(\d+)/);
-                                const youtube = url.match(
-                                    /(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/
-                                );
-                                if (vimeo || youtube) {
-                                    const embedSrc = vimeo
-                                        ? `https://player.vimeo.com/video/${vimeo[1]}`
-                                        : `https://www.youtube-nocookie.com/embed/${youtube![1]}`;
-                                    return (
-                                        <span className="story-media">
-                                            <iframe
-                                                src={embedSrc}
-                                                title={alt || 'Embedded video'}
-                                                allow="autoplay; fullscreen; picture-in-picture"
-                                                allowFullScreen
-                                                loading="lazy"
-                                            />
-                                            {alt && <span className="story-media-caption">{alt}</span>}
-                                        </span>
-                                    );
-                                }
-                                return (
-                                    <span className="story-media">
-                                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                                        <img src={url} alt={alt || ''} loading="lazy" decoding="async" />
-                                        {alt && <span className="story-media-caption">{alt}</span>}
-                                    </span>
-                                );
-                            },
-                        }}
-                    >
-                        {data.story}
-                    </ReactMarkdown>
+                    {storyMarkdown}
                 </div>
 
                 {/* FOOTER */}
@@ -460,9 +493,12 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
             </div>
 
             <style jsx>{`
-                /* COPY EXACT STYLES FROM ACHIEVEMENT MODAL */
-                
-                .achievement-modal-backdrop {
+                /* Presentation system mirrors AchievementModal (the reference modal):
+                   vmin-scaled type/spacing, min(90vmin, 900px) square container, one
+                   centered story column. Collab-specific bits (info cards, outcomes,
+                   website button) restyled into the same language; gold = site amber. */
+
+                .collab-modal-backdrop {
                     position: fixed;
                     inset: 0;
                     background: rgba(0, 0, 0, 0.98);
@@ -470,8 +506,9 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    padding: 20px;
+                    padding: clamp(12px, 2vh, 24px);
                     animation: fadeIn 0.3s ease-out;
+                    overflow: hidden;
                 }
 
                 @keyframes fadeIn {
@@ -479,62 +516,31 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                     to { opacity: 1; }
                 }
 
-                .reading-indicator {
-                    position: fixed;
-                    top: 0;
-                    left: 0;
-                    right: 0;
-                    height: 1px;
-                    z-index: 1004;
-                    opacity: 0;
-                    transition: opacity 0.2s ease;
-                }
-
-                .reading-indicator.active {
-                    opacity: 1;
-                }
-
-                .reading-bar {
-                    width: 100%;
-                    height: 100%;
-                    background: linear-gradient(90deg, 
-                        transparent 0%,
-                        rgba(255, 255, 255, 0.8) 50%,
-                        transparent 100%
-                    );
-                    animation: scan 1.5s linear infinite;
-                }
-
-                @keyframes scan {
-                    from { transform: translateX(-100%); }
-                    to { transform: translateX(100%); }
-                }
-
-                .achievement-modal-container {
-                    width: min(85vw, 85vh);
-                    height: min(85vw, 85vh);
-                    max-width: 900px;
-                    max-height: 900px;
-                    background: #000000;
+                .collab-modal-container {
+                    width: min(90vmin, 900px);
+                    height: min(90vmin, 900px);
+                    aspect-ratio: 1 / 1;
+                    background: #000;
                     border: 1px solid rgba(255, 255, 255, 0.1);
                     overflow-y: auto;
                     overflow-x: hidden;
                     animation: slideIn 0.5s cubic-bezier(0.16, 1, 0.3, 1);
                     scroll-behavior: smooth;
                     position: relative;
+                    scrollbar-width: none;
+                    -ms-overflow-style: none;
+                }
+
+                .collab-modal-container::-webkit-scrollbar {
+                    display: none;
                 }
 
                 @keyframes slideIn {
-                    from {
-                        opacity: 0;
-                        transform: translateY(40px);
-                    }
-                    to {
-                        opacity: 1;
-                        transform: translateY(0);
-                    }
+                    from { opacity: 0; transform: translateY(40px) scale(0.95); }
+                    to { opacity: 1; transform: translateY(0) scale(1); }
                 }
 
+                /* ===== Progress system ===== */
                 .progress-system {
                     position: sticky;
                     top: 0;
@@ -544,6 +550,12 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                     background: rgba(0, 0, 0, 0.95);
                     backdrop-filter: blur(10px);
                     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+                    display: grid;
+                    grid-template-columns: 1fr auto 1fr;
+                    align-items: center;
+                    padding: 0 clamp(12px, 2vmin, 20px);
+                    height: clamp(50px, 7vmin, 60px);
+                    overflow: hidden;
                 }
 
                 .progress-bar {
@@ -555,29 +567,116 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                     transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
                 }
 
+                .panel-left {
+                    display: flex;
+                    align-items: center;
+                    height: 100%;
+                }
+
+                .type-chip {
+                    display: flex;
+                    align-items: center;
+                    gap: clamp(6px, 1vmin, 8px);
+                }
+
+                .type-dot {
+                    width: clamp(8px, 1.2vmin, 10px);
+                    height: clamp(8px, 1.2vmin, 10px);
+                    border-radius: 50%;
+                    background: rgba(${GOLD}, 0.9);
+                }
+
+                .type-label {
+                    font: 600 clamp(9px, 1.3vmin, 11px)/1 'Rajdhani', monospace;
+                    letter-spacing: 0.12em;
+                    text-transform: uppercase;
+                    color: rgba(255, 255, 255, 0.8);
+                    white-space: nowrap;
+                }
+
+                .section-dots {
+                    display: flex;
+                    gap: clamp(16px, 3vmin, 32px);
+                    justify-content: center;
+                    align-items: center;
+                    transform: translateY(2px);
+                }
+
+                .section-dot {
+                    position: relative;
+                    background: transparent;
+                    border: none;
+                    cursor: pointer;
+                    padding: clamp(6px, 1vmin, 8px);
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    gap: clamp(6px, 1vmin, 8px);
+                    transition: all 0.3s ease;
+                }
+
+                .section-dot:hover {
+                    transform: translateY(-2px);
+                }
+
+                .section-dot-inner {
+                    width: clamp(8px, 1.2vmin, 10px);
+                    height: clamp(8px, 1.2vmin, 10px);
+                    background: rgba(255, 255, 255, 0.2);
+                    border: 2px solid rgba(255, 255, 255, 0.4);
+                    border-radius: 50%;
+                    transition: all 0.3s ease;
+                }
+
+                .section-dot.active .section-dot-inner {
+                    background: rgba(255, 255, 255, 0.9);
+                    border-color: rgba(255, 255, 255, 0.9);
+                    box-shadow: 0 0 12px rgba(255, 255, 255, 0.5);
+                    transform: scale(1.2);
+                }
+
+                .section-dot:hover .section-dot-inner {
+                    background: rgba(255, 255, 255, 0.4);
+                    border-color: rgba(255, 255, 255, 0.6);
+                }
+
+                .section-label {
+                    font: 400 clamp(8px, 1.2vmin, 10px)/1 'Rajdhani', monospace;
+                    letter-spacing: 0.12em;
+                    text-transform: uppercase;
+                    color: rgba(255, 255, 255, 0.5);
+                    white-space: nowrap;
+                    transition: color 0.3s ease;
+                }
+
+                .section-dot.active .section-label {
+                    color: rgba(255, 255, 255, 0.9);
+                }
+
+                .section-dot:hover .section-label {
+                    color: rgba(255, 255, 255, 0.8);
+                }
+
                 .close-btn-panel {
-                    position: absolute;
-                    top: 50%;
-                    right: 20px;
-                    transform: translateY(-50%);
-                    width: 32px;
-                    height: 32px;
+                    width: clamp(28px, 4vmin, 32px);
+                    height: clamp(28px, 4vmin, 32px);
                     background: transparent;
                     border: 1px solid rgba(255, 255, 255, 0.2);
                     cursor: pointer;
                     transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
                     overflow: hidden;
+                    justify-self: end;
                 }
 
                 .close-btn-panel:hover {
                     border-color: rgba(255, 255, 255, 0.8);
-                    transform: translateY(-50%) rotate(90deg);
+                    transform: rotate(90deg);
                 }
 
                 .close-icon {
                     position: relative;
-                    width: 14px;
-                    height: 14px;
+                    width: clamp(12px, 1.8vmin, 14px);
+                    height: clamp(12px, 1.8vmin, 14px);
                     margin: auto;
                 }
 
@@ -600,183 +699,10 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                 }
 
                 .close-btn-panel:hover .close-icon span {
-                    background: #FFFFFF;
+                    background: #fff;
                 }
 
-                .section-dots {
-                    display: flex;
-                    gap: 32px;
-                    justify-content: center;
-                    padding: 14px 20px;
-                }
-
-                .section-dot {
-                    position: relative;
-                    background: transparent;
-                    border: none;
-                    cursor: pointer;
-                    padding: 8px;
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    gap: 8px;
-                    transition: all 0.3s ease;
-                }
-
-                .section-dot:hover {
-                    transform: translateY(-2px);
-                }
-
-                .section-dot-inner {
-                    width: 10px;
-                    height: 10px;
-                    background: rgba(255, 255, 255, 0.2);
-                    border: 2px solid rgba(255, 255, 255, 0.4);
-                    border-radius: 50%;
-                    transition: all 0.3s ease;
-                }
-
-                .section-dot.active .section-dot-inner {
-                    background: rgba(255, 255, 255, 0.9);
-                    border-color: rgba(255, 255, 255, 0.9);
-                    box-shadow: 0 0 12px rgba(255, 255, 255, 0.5);
-                    transform: scale(1.2);
-                }
-
-                .section-dot:hover .section-dot-inner {
-                    background: rgba(255, 255, 255, 0.4);
-                    border-color: rgba(255, 255, 255, 0.6);
-                }
-
-                .section-label {
-                    font: 400 10px/1 'Rajdhani', monospace;
-                    letter-spacing: 0.12em;
-                    text-transform: uppercase;
-                    color: rgba(255, 255, 255, 0.5);
-                    white-space: nowrap;
-                    transition: color 0.3s ease;
-                }
-
-                .section-dot.active .section-label {
-                    color: rgba(255, 255, 255, 0.9);
-                }
-
-                .section-dot:hover .section-label {
-                    color: rgba(255, 255, 255, 0.8);
-                }
-
-                /* SUMMARY SECTION */
-                .summary-section {
-                    padding: 50px 0;
-                    background: rgba(255, 255, 255, 0.01);
-                }
-
-                .summary-content {
-                    max-width: 900px;
-                    margin: 0 auto;
-                    padding: 0 60px;
-                }
-
-                .summary-text {
-                    font: 400 clamp(18px, 2.5vw, 22px)/1.6 'Rajdhani', monospace;
-                    color: rgba(255, 255, 255, 0.85);
-                    margin: 0 0 40px 0;
-                    text-align: center;
-                    max-width: 700px;
-                    margin-left: auto;
-                    margin-right: auto;
-                }
-
-                .summary-info {
-                    display: grid;
-                    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                    gap: 20px;
-                    max-width: 800px;
-                    margin: 0 auto;
-                }
-
-                .info-card {
-                    padding: 24px;
-                    background: rgba(255, 255, 255, 0.05);
-                    border: 1px solid rgba(255, 255, 255, 0.15);
-                    position: relative;
-                    overflow: hidden;
-                    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-                }
-
-                .info-card::before {
-                    content: '';
-                    position: absolute;
-                    top: 0;
-                    left: -100%;
-                    width: 100%;
-                    height: 1px;
-                    background: linear-gradient(90deg, 
-                        transparent 0%,
-                        rgba(255, 215, 0, 0.8) 50%,
-                        transparent 100%
-                    );
-                    transition: left 0.6s ease;
-                }
-
-                .info-card::after {
-                    content: '';
-                    position: absolute;
-                    inset: -2px;
-                    border-radius: inherit;
-                    background: linear-gradient(135deg, 
-                        rgba(255, 215, 0, 0) 0%,
-                        rgba(255, 215, 0, 0.15) 50%,
-                        rgba(255, 215, 0, 0) 100%
-                    );
-                    opacity: 0;
-                    transition: opacity 0.4s ease;
-                    pointer-events: none;
-                }
-
-                .info-card:hover {
-                    background: rgba(255, 255, 255, 0.08);
-                    border-color: rgba(255, 215, 0, 0.6);
-                    transform: translateY(-4px) scale(1.02);
-                    box-shadow: 0 8px 32px rgba(255, 215, 0, 0.2);
-                }
-
-                .info-card:hover::before {
-                    left: 100%;
-                }
-
-                .info-card:hover::after {
-                    opacity: 1;
-                }
-
-                .info-label {
-                    font: 600 11px/1 'Rajdhani', monospace;
-                    letter-spacing: 0.2em;
-                    text-transform: uppercase;
-                    color: rgba(255, 255, 255, 0.7);
-                    margin-bottom: 12px;
-                    transition: all 0.4s ease;
-                }
-
-                .info-card:hover .info-label {
-                    color: rgba(255, 215, 0, 0.95);
-                    text-shadow: 0 0 12px rgba(255, 215, 0, 0.4);
-                }
-
-                .info-value {
-                    font: 400 16px/1.4 'Rajdhani', monospace;
-                    color: rgba(255, 255, 255, 0.9);
-                    transition: color 0.4s ease, text-shadow 0.4s ease;
-                }
-
-                .info-card:hover .info-value {
-                    font-weight: 600;
-                    color: rgba(255, 255, 255, 1);
-                    text-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
-                    letter-spacing: -0.003em;
-                }
-
-                /* HERO SECTION */
+                /* ===== Hero ===== */
                 .hero-section {
                     position: relative;
                     width: 100%;
@@ -801,8 +727,8 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                     top: 50%;
                     left: 50%;
                     transform: translate(-50%, -50%);
-                    width: 200px;
-                    height: 200px;
+                    width: clamp(140px, 25vmin, 200px);
+                    height: clamp(140px, 25vmin, 200px);
                     display: flex;
                     align-items: center;
                     justify-content: center;
@@ -830,22 +756,25 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                 .hero-content {
                     position: relative;
                     z-index: 2;
-                    padding: 60px;
+                    padding: clamp(30px, 5vmin, 60px);
+                    /* extra bottom clearance so a two-line hook never collides with
+                       the READ MORE indicator that overlaps the hero's bottom edge */
+                    padding-bottom: clamp(48px, 8vmin, 72px);
                     width: 100%;
                 }
 
                 .hero-meta {
                     display: flex;
                     align-items: center;
-                    gap: 8px;
-                    margin-bottom: 16px;
+                    gap: clamp(10px, 1.5vmin, 16px);
+                    margin-bottom: 2px;
                     opacity: 0;
                     animation: fadeInUp 0.6s 0.2s ease forwards;
                     flex-wrap: wrap;
                 }
 
                 .meta-item {
-                    font: 400 11px/1 'Rajdhani', monospace;
+                    font: 400 clamp(9px, 1.3vmin, 11px)/1 'Rajdhani', monospace;
                     letter-spacing: 0.15em;
                     text-transform: uppercase;
                     color: rgba(255, 255, 255, 0.6);
@@ -856,12 +785,9 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                 }
 
                 .hero-title {
-                    /* Height-aware cap: 6vw upper cap relaxed to min(64px, 9vh) so
-                       a wide-but-short viewport can't blow out the fixed-ratio hero.
-                       No-op at the 1440 ref (>=~711px tall → 9vh>=64px → 64px cap). */
-                    font: 700 clamp(42px, 6vw, min(64px, 9vh))/1 'Rajdhani', monospace;
-                    color: #FFFFFF;
-                    margin: 0 0 18px 0;
+                    font: 700 clamp(28px, 5vmin, 64px)/1 'Rajdhani', monospace;
+                    color: #fff;
+                    margin: 0 0 clamp(8px, 1.2vmin, 10px) 0;
                     letter-spacing: -0.02em;
                     opacity: 0;
                     animation: fadeInUp 0.6s 0.3s ease forwards;
@@ -872,23 +798,8 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                     position: relative;
                 }
 
-                .title-word::after {
-                    content: '';
-                    position: absolute;
-                    bottom: 0;
-                    left: 0;
-                    width: 0;
-                    height: 2px;
-                    background: rgba(255, 255, 255, 0.3);
-                    transition: width 0.5s ease;
-                }
-
-                .hero-section:hover .title-word::after {
-                    width: 100%;
-                }
-
                 .hero-hook {
-                    font: 400 clamp(18px, 2.5vw, 22px)/1.4 'Rajdhani', monospace;
+                    font: 400 clamp(14px, 2vmin, 22px)/1.4 'Rajdhani', monospace;
                     color: rgba(255, 255, 255, 0.9);
                     margin: 0 0 6px 0;
                     max-width: 650px;
@@ -898,11 +809,10 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
 
                 .scroll-indicator {
                     position: absolute;
-                    bottom: -15px;
+                    bottom: clamp(-10px, -1.5vmin, -15px);
                     left: 0;
                     right: 0;
                     margin: 0 auto;
-                    transform: none;
                     width: max-content;
                     background: transparent;
                     border: none;
@@ -911,11 +821,11 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                     opacity: 0;
                     animation: fadeInUp 0.8s 0.8s ease forwards;
                     transition: transform 0.3s ease;
-                    padding: 20px;
+                    padding: clamp(15px, 2.5vmin, 20px);
                     display: flex;
                     flex-direction: column;
                     align-items: center;
-                    gap: 8px;
+                    gap: clamp(6px, 1vmin, 8px);
                 }
 
                 .scroll-indicator:hover {
@@ -923,7 +833,7 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                 }
 
                 .scroll-text {
-                    font: 400 13px/1 'Rajdhani', monospace;
+                    font: 400 clamp(10px, 1.5vmin, 13px)/1 'Rajdhani', monospace;
                     letter-spacing: 0.12em;
                     text-transform: uppercase;
                     color: rgba(255, 255, 255, 0.7);
@@ -936,10 +846,15 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                 }
 
                 .scroll-arrow {
-                    animation: scrollBounce 2s ease-in-out infinite;
                     stroke: rgba(255, 255, 255, 0.5);
                     transition: stroke 0.3s ease;
                     display: block;
+                    width: clamp(20px, 3vmin, 24px);
+                    height: clamp(20px, 3vmin, 24px);
+                }
+
+                .scroll-arrow-anim {
+                    animation: scrollBounce 1.2s ease-in-out 1;
                 }
 
                 .scroll-indicator:hover .scroll-arrow {
@@ -948,35 +863,23 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                 }
 
                 @keyframes scrollBounce {
-                    0%, 20%, 50%, 80%, 100% {
-                        transform: translateY(0);
-                    }
-                    40% {
-                        transform: translateY(5px);
-                    }
-                    60% {
-                        transform: translateY(3px);
-                    }
+                    0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+                    40% { transform: translateY(5px); }
+                    60% { transform: translateY(3px); }
                 }
 
                 @keyframes fadeInUp {
-                    to {
-                        opacity: 1;
-                        transform: translateY(0);
-                    }
-                    from {
-                        opacity: 0;
-                        transform: translateY(20px);
-                    }
+                    from { opacity: 0; transform: translateY(20px); }
+                    to { opacity: 1; transform: translateY(0); }
                 }
 
-                /* SECTION HEADERS */
+                /* ===== Section headers ===== */
                 .section-header {
                     display: flex;
                     align-items: center;
-                    gap: 16px;
-                    margin-bottom: 40px;
-                    padding: 0 80px 16px 80px;
+                    gap: clamp(12px, 2vmin, 16px);
+                    margin-bottom: clamp(30px, 4vmin, 40px);
+                    padding: 0 clamp(30px, 4vmin, 60px) clamp(12px, 2vmin, 16px) clamp(30px, 4vmin, 60px);
                     max-width: 900px;
                     margin-left: auto;
                     margin-right: auto;
@@ -988,8 +891,8 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                     content: '';
                     position: absolute;
                     bottom: 0;
-                    left: 70px;
-                    right: 70px;
+                    left: 30px;
+                    right: 30px;
                     height: 1px;
                     background: rgba(255, 255, 255, 0.2);
                 }
@@ -997,42 +900,147 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                 .section-header > div:first-child {
                     display: flex;
                     align-items: center;
-                    gap: 16px;
+                    gap: clamp(12px, 2vmin, 16px);
                 }
 
                 .section-number {
-                    font: 700 32px/1 'Rajdhani', monospace;
+                    font: 700 clamp(24px, 3.5vmin, 32px)/1 'Rajdhani', monospace;
                     color: rgba(255, 255, 255, 0.5);
                     letter-spacing: -0.02em;
                 }
 
                 .section-title {
-                    font: 500 11px/1 'Rajdhani', monospace;
+                    font: 500 clamp(9px, 1.3vmin, 11px)/1 'Rajdhani', monospace;
                     letter-spacing: 0.2em;
                     text-transform: uppercase;
                     color: rgba(255, 255, 255, 0.7);
                 }
 
-                /* OUTCOMES SECTION */
-                .stakes-section {
-                    padding: 50px 0;
-                    background: linear-gradient(to bottom,
-                        rgba(255, 255, 255, 0.02) 0%,
+                .read-time-wrapper {
+                    position: absolute;
+                    right: clamp(30px, 4vmin, 60px);
+                    top: 50%;
+                    transform: translateY(-50%);
+                    display: flex;
+                    align-items: center;
+                    gap: clamp(4px, 0.7vmin, 6px);
+                    font: 400 clamp(9px, 1.3vmin, 11px)/1 'Rajdhani', monospace;
+                    letter-spacing: 0.15em;
+                    text-transform: uppercase;
+                    color: rgba(255, 255, 255, 0.6);
+                    white-space: nowrap;
+                }
+
+                .read-time-wrapper svg {
+                    opacity: 0.7;
+                    flex-shrink: 0;
+                    width: clamp(10px, 1.5vmin, 12px);
+                    height: clamp(10px, 1.5vmin, 12px);
+                }
+
+                /* ===== Summary ===== */
+                .summary-section {
+                    padding: clamp(30px, 4vmin, 50px) 0;
+                    background: transparent;
+                }
+
+                .summary-content {
+                    max-width: 900px;
+                    margin: 0 auto;
+                    padding: 0 clamp(30px, 4vmin, 60px);
+                }
+
+                .summary-text {
+                    font: 400 clamp(15px, 2.2vmin, 20px)/1.6 'Rajdhani', monospace;
+                    color: rgba(255, 255, 255, 0.85);
+                    margin: 0 0 clamp(28px, 4vmin, 40px) 0;
+                    text-align: center;
+                    max-width: min(700px, 90%);
+                    margin-left: auto;
+                    margin-right: auto;
+                }
+
+                .summary-info {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(clamp(180px, 28vmin, 250px), 1fr));
+                    gap: clamp(12px, 2.2vmin, 20px);
+                    max-width: 800px;
+                    margin: 0 auto;
+                }
+
+                .info-card {
+                    padding: clamp(16px, 2.7vmin, 24px);
+                    background: rgba(255, 255, 255, 0.05);
+                    border: 1px solid rgba(255, 255, 255, 0.15);
+                    position: relative;
+                    overflow: hidden;
+                    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+                }
+
+                .info-card::before {
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: -100%;
+                    width: 100%;
+                    height: 1px;
+                    background: linear-gradient(90deg,
+                        transparent 0%,
+                        rgba(${GOLD}, 0.8) 50%,
                         transparent 100%
                     );
+                    transition: left 0.6s ease;
+                }
+
+                .info-card:hover {
+                    border-color: rgba(${GOLD}, 0.6);
+                    transform: translateY(-3px);
+                }
+
+                .info-card:hover::before {
+                    left: 100%;
+                }
+
+                .info-label {
+                    font: 600 clamp(9px, 1.3vmin, 11px)/1 'Rajdhani', monospace;
+                    letter-spacing: 0.2em;
+                    text-transform: uppercase;
+                    color: rgba(255, 255, 255, 0.7);
+                    margin-bottom: clamp(8px, 1.4vmin, 12px);
+                    transition: color 0.4s ease;
+                }
+
+                .info-card:hover .info-label {
+                    color: rgba(${GOLD}, 0.95);
+                }
+
+                .info-value {
+                    font: 400 clamp(14px, 1.9vmin, 16px)/1.4 'Rajdhani', monospace;
+                    color: rgba(255, 255, 255, 0.9);
+                    transition: color 0.4s ease;
+                }
+
+                .info-card:hover .info-value {
+                    color: rgba(255, 255, 255, 1);
+                }
+
+                /* ===== Stakes / outcomes ===== */
+                .stakes-section {
+                    padding: clamp(30px, 4vmin, 50px) 0;
+                    background: transparent;
                 }
 
                 .outcomes-grid {
                     display: grid;
-                    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                    gap: 20px;
+                    grid-template-columns: repeat(auto-fit, minmax(clamp(180px, 28vmin, 250px), 1fr));
+                    gap: clamp(12px, 2.2vmin, 20px);
                     max-width: 900px;
                     margin: 0 auto;
-                    padding: 0 60px;
+                    padding: 0 clamp(30px, 4vmin, 60px);
                 }
 
                 .outcome-card {
-                    padding: 24px;
+                    padding: clamp(16px, 2.7vmin, 24px);
                     background: rgba(255, 255, 255, 0.05);
                     border: 1px solid rgba(255, 255, 255, 0.15);
                     position: relative;
@@ -1047,257 +1055,232 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                     left: -100%;
                     width: 100%;
                     height: 1px;
-                    background: linear-gradient(90deg, 
+                    background: linear-gradient(90deg,
                         transparent 0%,
-                        rgba(255, 215, 0, 0.8) 50%,
+                        rgba(${GOLD}, 0.8) 50%,
                         transparent 100%
                     );
                     transition: left 0.6s ease;
                 }
 
-                .outcome-card::after {
-                    content: '';
-                    position: absolute;
-                    inset: -2px;
-                    border-radius: inherit;
-                    background: linear-gradient(135deg, 
-                        rgba(255, 215, 0, 0) 0%,
-                        rgba(255, 215, 0, 0.15) 50%,
-                        rgba(255, 215, 0, 0) 100%
-                    );
-                    opacity: 0;
-                    transition: opacity 0.4s ease;
-                    pointer-events: none;
-                }
-
                 .outcome-card:hover {
-                    background: rgba(255, 255, 255, 0.08);
-                    border-color: rgba(255, 215, 0, 0.6);
-                    transform: translateY(-4px);
-                    box-shadow: 0 8px 32px rgba(255, 215, 0, 0.2);
+                    border-color: rgba(${GOLD}, 0.6);
+                    transform: translateY(-3px);
                 }
 
                 .outcome-card:hover::before {
                     left: 100%;
                 }
 
-                .outcome-card:hover::after {
-                    opacity: 1;
-                }
-
                 .outcome-marker {
-                    font: 700 14px/1 'Rajdhani', monospace;
+                    font: 700 clamp(12px, 1.7vmin, 14px)/1 'Rajdhani', monospace;
                     color: rgba(255, 255, 255, 0.3);
-                    margin-bottom: 12px;
-                    transition: all 0.4s ease;
+                    margin-bottom: clamp(8px, 1.4vmin, 12px);
+                    transition: color 0.4s ease;
                 }
 
                 .outcome-card:hover .outcome-marker {
-                    color: rgba(255, 215, 0, 0.95);
-                    text-shadow: 0 0 12px rgba(255, 215, 0, 0.4);
+                    color: rgba(${GOLD}, 0.95);
                 }
 
                 .outcome-card p {
-                    font: 400 16px/1.6 'Rajdhani', monospace;
+                    font: 400 clamp(14px, 1.9vmin, 16px)/1.6 'Rajdhani', monospace;
                     color: rgba(255, 255, 255, 0.9);
                     margin: 0;
-                    transition: color 0.4s ease, text-shadow 0.4s ease;
+                    transition: color 0.4s ease;
                 }
 
                 .outcome-card:hover p {
-                    font-weight: 600;
                     color: rgba(255, 255, 255, 1);
-                    text-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
-                    letter-spacing: -0.003em;
                 }
 
-                /* STORY CONTENT */
+                /* ===== Story (markdown) — ONE centered column, same as the graph modal ===== */
                 .story-content {
-                    padding: 50px 0;
+                    padding: clamp(30px, 4vmin, 50px) 0;
+                    max-width: 900px;
+                    margin: 0 auto;
                 }
 
                 .story-content .section-header {
-                    position: relative;
-                    display: flex;
-                    align-items: center;
-                    gap: 16px;
-                    margin: 0 0 50px 0;
-                    padding: 0 80px 16px 80px;
-                    max-width: 900px;
+                    margin: 0 0 clamp(35px, 5vmin, 50px) 0;
+                    padding: 0 clamp(30px, 4vmin, 60px) clamp(12px, 2vmin, 16px) clamp(30px, 4vmin, 60px);
+                }
+
+                /* The markdown subtree is memoized (built inside useMemo), and styled-jsx
+                   does NOT add its scope class to JSX created in hook callbacks — so every
+                   rule below is written fully-global, anchored under the container class
+                   (V7 gotcha: never mix scoped + :global for these; keep specificity ascending). */
+                :global(.collab-modal-container .story-h2),
+                :global(.collab-modal-container .story-h3),
+                :global(.collab-modal-container .story-p),
+                :global(.collab-modal-container .story-quote),
+                :global(.collab-modal-container .story-list),
+                :global(.collab-modal-container .story-media) {
+                    max-width: min(550px, 90%);
                     margin-left: auto;
                     margin-right: auto;
                 }
 
-                .story-content .section-header::after {
-                    content: '';
-                    position: absolute;
-                    bottom: 0;
-                    left: 70px;
-                    right: 70px;
-                    height: 1px;
-                    background: rgba(255, 255, 255, 0.2);
+                :global(.collab-modal-container .story-h2) {
+                    font: 700 clamp(22px, 3.5vmin, 34px)/1.2 'Rajdhani', monospace;
+                    color: #fff;
+                    margin: clamp(40px, 6vmin, 60px) auto clamp(18px, 2.5vmin, 24px) auto;
+                    position: relative;
+                    padding-left: 0;
                 }
 
-                .story-content .section-header .read-time-wrapper {
+                :global(.collab-modal-container .h2-marker) {
                     position: absolute;
-                    right: 80px;
+                    left: 0;
                     top: 50%;
-                    transform: translateY(-50%);
+                    transform: translateY(-50%) translateX(calc(-100% - clamp(20px, 3vmin, 28px)));
+                    width: clamp(18px, 2.5vmin, 22px);
+                    height: clamp(18px, 2.5vmin, 22px);
                     display: flex;
                     align-items: center;
-                    gap: 6px;
-                    font: 400 11px/1 'Rajdhani', monospace;
-                    letter-spacing: 0.15em;
-                    text-transform: uppercase;
-                    color: rgba(255, 255, 255, 0.6);
-                    white-space: nowrap;
+                    justify-content: center;
                 }
 
-                .story-h2,
-                .story-h3,
-                .story-p,
-                .story-quote,
-                .story-list {
-                    max-width: 550px;
-                    margin-left: auto;
-                    margin-right: auto;
-                }
-                
-                .story-h2 {
-                    font: 700 clamp(28px, 3.5vw, 34px)/1.2 'Rajdhani', monospace;
-                    color: #FFFFFF;
-                    margin: 60px auto 24px auto;
-                    position: relative;
-                    padding-left: 104px;
-                    padding-right: 60px;
+                :global(.collab-modal-container .h2-arrow) {
+                    width: 100%;
+                    height: 100%;
+                    color: rgba(255, 255, 255, 0.35);
+                    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+                    transform: rotate(0deg);
                 }
 
-                .h2-marker {
-                    position: absolute;
-                    left: 80px;
-                    top: 50%;
-                    transform: translateY(-50%);
-                    width: 12px;
-                    height: 12px;
-                    border: 1px solid rgba(255, 255, 255, 0.3);
-                    background: transparent;
-                    transition: all 0.3s ease;
+                :global(.collab-modal-container .story-h2:hover .h2-arrow) {
+                    color: rgba(255, 255, 255, 0.85);
+                    transform: rotate(90deg);
+                    filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.3));
                 }
 
-                .story-h2:hover .h2-marker {
-                    background: rgba(255, 255, 255, 0.1);
-                    transform: translateY(-50%) rotate(45deg);
-                }
-
-                .story-h3 {
-                    font: 600 clamp(20px, 2.5vw, 24px)/1.3 'Rajdhani', monospace;
+                :global(.collab-modal-container .story-h3) {
+                    font: 600 clamp(17px, 2.5vmin, 24px)/1.3 'Rajdhani', monospace;
                     color: rgba(255, 255, 255, 0.9);
-                    margin: 40px auto 16px auto;
+                    margin: clamp(30px, 4vmin, 40px) auto clamp(12px, 2vmin, 16px) auto;
                     position: relative;
-                    padding-left: 104px;
-                    padding-right: 60px;
+                    padding-left: clamp(20px, 3vmin, 24px);
                 }
 
-                .story-h3::before {
-                    content: '//';
+                :global(.collab-modal-container .story-h3::before) {
+                    content: '// ';
                     position: absolute;
-                    left: 80px;
+                    left: 0;
                     color: rgba(255, 255, 255, 0.2);
                 }
 
-                .story-p {
-                    font: 400 17px/1.7 'Rajdhani', monospace;
+                :global(.collab-modal-container .story-p) {
+                    font: 400 clamp(15px, 2vmin, 17px)/1.7 'Rajdhani', monospace;
                     color: rgba(255, 255, 255, 0.75);
-                    margin: 0 0 20px 0;
-                    padding-left: 120px;
-                    padding-right: 60px;
+                    margin: clamp(16px, 2.5vmin, 20px) auto;
                 }
 
-                .story-list {
-                    padding-left: 140px;
-                    padding-right: 60px;
-                    margin: 0 auto 30px auto;
+                :global(.collab-modal-container .story-emphasis) {
+                    color: #fff;
+                    font-weight: 600;
+                    position: relative;
+                }
+
+                :global(.collab-modal-container .story-list) {
+                    margin: clamp(12px, 2vmin, 16px) auto;
+                    padding-left: clamp(1rem, 2.5vmin, 1.25rem);
+                    list-style-position: outside;
+                }
+
+                :global(.collab-modal-container .story-list.ordered) {
+                    list-style-type: decimal;
+                }
+
+                :global(.collab-modal-container .story-list:not(.ordered)) {
                     list-style-type: disc;
                 }
 
-                .story-li {
-                    margin: 6px 0;
-                    color: rgba(255,255,255,0.75);
-                    font: 400 17px/1.7 'Rajdhani', monospace;
+                :global(.collab-modal-container .story-li) {
+                    margin: clamp(4px, 0.7vmin, 6px) 0;
+                    color: rgba(255, 255, 255, 0.75);
+                    font: 400 clamp(15px, 2vmin, 17px)/1.7 'Rajdhani', monospace;
                 }
 
-                .story-quote {
-                    margin: 50px auto;
-                    margin-left: 120px;
-                    margin-right: 60px;
-                    padding: 32px;
-                    padding-left: 48px;
-                    padding-right: 48px;
+                :global(.collab-modal-container .story-li > ul),
+                :global(.collab-modal-container .story-li > ol) {
+                    margin-top: clamp(6px, 1vmin, 8px);
+                    margin-bottom: clamp(6px, 1vmin, 8px);
+                }
+
+                :global(.collab-modal-container .story-quote) {
+                    margin: clamp(35px, 5vmin, 50px) auto;
+                    padding: clamp(24px, 3.5vmin, 32px);
                     position: relative;
                     background: transparent;
                     border: 1px solid rgba(255, 255, 255, 0.1);
                 }
 
-                .quote-mark {
+                :global(.collab-modal-container .quote-mark) {
                     position: absolute;
-                    top: -10px;
-                    left: 20px;
-                    font-size: 48px;
+                    top: clamp(-8px, -1.2vmin, -10px);
+                    left: clamp(15px, 2.5vmin, 20px);
+                    font-size: clamp(36px, 5vmin, 48px);
                     color: rgba(255, 255, 255, 0.1);
                     font-family: Georgia, serif;
-                    background: #000000;
-                    padding: 0 10px;
+                    background: #000;
+                    padding: 0 clamp(8px, 1.2vmin, 10px);
                 }
 
-                .story-quote p {
-                    font: 500 20px/1.5 'Rajdhani', monospace;
+                :global(.collab-modal-container .story-quote p) {
+                    font: 500 clamp(16px, 2.5vmin, 20px)/1.5 'Rajdhani', monospace;
                     font-style: italic;
                     color: rgba(255, 255, 255, 0.8);
                     margin: 0;
                     position: relative;
                 }
 
-                .story-emphasis {
-                    font-weight: 700;
-                    color: rgba(255, 255, 255, 0.95);
+                /* Story media (pictures + video embeds) — same column + reveal as
+                   achievement story images. span-based because it sits inside a <p>. */
+                :global(.collab-modal-container .story-media) {
+                    display: block;
+                    margin-top: clamp(35px, 5vmin, 50px);
+                    margin-bottom: clamp(35px, 5vmin, 50px);
+                    opacity: 0;
+                    transform: translateY(30px);
+                    transition: all 0.6s ease;
                 }
 
-                /* Story media (pictures + video embeds via markdown image syntax).
-                   span-based (not figure/div) because it renders inside a <p>. */
-                .story-media {
-                    display: block;
-                    margin: 40px 60px;
+                :global(.collab-modal-container .story-media.in-view) {
+                    opacity: 1;
+                    transform: translateY(0);
                 }
-                .story-media img,
-                .story-media iframe {
+
+                :global(.collab-modal-container .story-media img),
+                :global(.collab-modal-container .story-media iframe) {
                     display: block;
                     width: 100%;
                     border: 1px solid rgba(255, 255, 255, 0.1);
                     background: #000;
                 }
-                .story-media iframe {
+
+                :global(.collab-modal-container .story-media iframe) {
                     aspect-ratio: 16 / 9;
                 }
-                .story-media img {
+
+                :global(.collab-modal-container .story-media img) {
                     height: auto;
-                }
-                .story-media-caption {
-                    display: block;
-                    margin-top: 10px;
-                    font: 600 11px/1.4 'Rajdhani', monospace;
-                    letter-spacing: 0.12em;
-                    text-transform: uppercase;
-                    color: rgba(255, 255, 255, 0.45);
-                }
-                @media (max-width: 768px) {
-                    .story-media {
-                        margin: 28px 0;
-                    }
+                    max-height: clamp(300px, 45vmin, 400px);
+                    object-fit: cover;
                 }
 
-                /* FOOTER */
+                :global(.collab-modal-container .story-media-caption) {
+                    display: block;
+                    padding: clamp(10px, 1.5vmin, 12px) 0 0;
+                    font: 400 clamp(10px, 1.5vmin, 12px)/1.4 'Rajdhani', monospace;
+                    color: rgba(255, 255, 255, 0.5);
+                    letter-spacing: 0.06em;
+                    text-transform: uppercase;
+                }
+
+                /* ===== Footer ===== */
                 .footer-section {
-                    padding: 60px;
+                    padding: clamp(30px, 4vmin, 40px) clamp(30px, 4vmin, 60px);
                     border-top: 1px solid rgba(255, 255, 255, 0.05);
                     background: rgba(0, 0, 0, 0.5);
                     display: flex;
@@ -1308,12 +1291,12 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                 .website-button {
                     display: inline-flex;
                     align-items: center;
-                    gap: 12px;
-                    padding: 18px 36px;
+                    gap: clamp(8px, 1.4vmin, 12px);
+                    padding: clamp(14px, 2vmin, 18px) clamp(24px, 4vmin, 36px);
                     background: transparent;
                     border: 1px solid rgba(255, 255, 255, 0.3);
                     color: rgba(255, 255, 255, 0.9);
-                    font: 600 14px/1 'Rajdhani', monospace;
+                    font: 600 clamp(11px, 1.6vmin, 14px)/1 'Rajdhani', monospace;
                     letter-spacing: 0.12em;
                     text-transform: uppercase;
                     text-decoration: none;
@@ -1329,7 +1312,7 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                     left: -100%;
                     width: 100%;
                     height: 100%;
-                    background: linear-gradient(90deg, 
+                    background: linear-gradient(90deg,
                         transparent 0%,
                         rgba(255, 255, 255, 0.1) 50%,
                         transparent 100%
@@ -1344,8 +1327,6 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                 .website-button:hover {
                     border-color: rgba(255, 255, 255, 0.6);
                     background: rgba(255, 255, 255, 0.08);
-                    transform: translateX(4px);
-                    box-shadow: 0 4px 16px rgba(255, 255, 255, 0.1);
                 }
 
                 .website-button svg {
@@ -1356,24 +1337,7 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                     transform: translateX(2px) translateY(-2px);
                 }
 
-                /* SCROLLBAR */
-                .achievement-modal-container::-webkit-scrollbar {
-                    width: 6px;
-                }
-
-                .achievement-modal-container::-webkit-scrollbar-track {
-                    background: rgba(255, 255, 255, 0.02);
-                }
-
-                .achievement-modal-container::-webkit-scrollbar-thumb {
-                    background: rgba(255, 255, 255, 0.2);
-                    border-radius: 3px;
-                }
-
-                .achievement-modal-container::-webkit-scrollbar-thumb:hover {
-                    background: rgba(255, 255, 255, 0.3);
-                }
-
+                /* Section reveal */
                 .story-section {
                     opacity: 0;
                     transform: translateY(40px);
@@ -1385,40 +1349,54 @@ export default function CollaborationModal({ data, isOpen, onClose, logo, href, 
                     transform: translateY(0);
                 }
 
-                @media (max-width: 768px) {
-                    .achievement-modal-container {
-                        width: min(95vw, 95vh);
-                        height: min(95vw, 95vh);
-                        max-width: none;
-                        max-height: none;
+                /* ===== Small — real phones only. NOT height-gated: a scaled-down
+                   desktop window must keep the one-row header and the 4/3 hero;
+                   the vmin clamps handle the shrink. Mobile redo comes later. ===== */
+                @media (max-width: 480px) {
+                    .progress-system {
+                        grid-template-columns: 1fr;
+                        grid-template-rows: auto auto auto;
+                        padding: clamp(10px, 1.5vmin, 12px);
+                        gap: clamp(10px, 1.5vmin, 12px);
+                        height: auto;
                     }
-                    .hero-section {
-                        aspect-ratio: 3 / 4;
+
+                    .panel-left {
+                        order: 2;
+                        height: auto;
+                        justify-content: center;
                     }
+
                     .section-dots {
-                        gap: 20px;
-                        padding: 16px;
+                        order: 1;
+                        gap: clamp(12px, 2vmin, 20px);
                     }
-                    .section-label {
-                        font-size: 9px;
+
+                    .close-btn-panel {
+                        order: 3;
+                        justify-self: center;
                     }
-                    .hero-content {
-                        padding: 40px 24px;
-                    }
+
+                    .summary-info,
                     .outcomes-grid {
                         grid-template-columns: 1fr;
-                        gap: 16px;
-                        padding: 0 24px;
                     }
-                    .section-header {
-                        padding: 0 24px 16px 24px;
+
+                    .collab-modal-backdrop {
+                        padding: 6px;
+                    }
+
+                    .section-label {
+                        display: none;
                     }
                 }
 
                 @media (prefers-reduced-motion: reduce) {
                     *,
                     *::before,
-                    *::after {
+                    *::after,
+                    :global(.collab-modal-container .story-media),
+                    :global(.collab-modal-container .h2-arrow) {
                         animation-duration: 0.01ms !important;
                         animation-iteration-count: 1 !important;
                         transition-duration: 0.01ms !important;
