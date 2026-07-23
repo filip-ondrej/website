@@ -18,6 +18,9 @@ const eslintConfig = [
       "out/**",
       "build/**",
       "next-env.d.ts",
+      // Generated circuit-board trace data: one enormous path expression that
+      // overflows the ESLint parser's stack. Art data, nothing to lint.
+      "src/components/08_CircuitBoardArt.ts",
     ],
   },
 ];

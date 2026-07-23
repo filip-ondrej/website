@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import ProjectModal from '@/components/ProjectModal';
 import { PROJECTS, type ProjectItem } from '@/data/projects';
 
@@ -17,9 +18,9 @@ export default function ProjectsMatrix() {
 
     return (
         <main className="pm">
-            <a className="pm-back" href="/">
+            <Link className="pm-back" href="/">
                 <span aria-hidden="true">←</span> BACK HOME
-            </a>
+            </Link>
 
             <header className="pm-head">
                 <p className="pm-label">
@@ -90,7 +91,7 @@ export default function ProjectsMatrix() {
                 ))}
             </div>
 
-            <p className="pm-note">// MORE ENTRIES LAND WITH THE CONTENT PASS</p>
+            <p className="pm-note">{'// MORE ENTRIES LAND WITH THE CONTENT PASS'}</p>
 
             <ProjectModal
                 data={modalProject}
