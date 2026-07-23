@@ -43,7 +43,7 @@ export default function Home() {
                 <PressRecognitionTitle />
                 <Recognition />
             </div>
-            <CircuitBoard />
+            {/*<CircuitBoard />*/}
             <div id="contact">
                 <ContactTitle />
             </div>
