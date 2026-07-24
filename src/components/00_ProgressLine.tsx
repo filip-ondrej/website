@@ -900,6 +900,27 @@ export function ProgressLine() {
             tipCatchupRef.current = true;
         };
 
+        // Programmatic navigation (navbar links, back-to-top). Feeds the SAME
+        // glide as stepped-mouse wheel input: the rAF eases the page to the
+        // target while the tip stays hard-locked to the live position — page
+        // and line arrive together in every frame. Native smooth scrollTo went
+        // down the EXTERNAL path instead, where the tip's catch-up cap
+        // (TIP_CATCHUP_MAX_STEP px/frame) turned a long jump into seconds of
+        // trailing line. Reduced motion: the glide's alpha=1 makes it instant.
+        const handleNavigate = (e: Event) => {
+            if (
+                document.documentElement.hasAttribute('data-scroll-locked') ||
+                document.documentElement.hasAttribute('data-rail-hijack')
+            ) {
+                return;
+            }
+            const top = (e as CustomEvent<{ top?: number }>).detail?.top;
+            if (typeof top !== 'number' || !Number.isFinite(top)) return;
+            const maxScroll =
+                document.documentElement.scrollHeight - window.innerHeight;
+            targetScrollRef.current = clamp(top, 0, Math.max(0, maxScroll));
+        };
+
         let lastDrawnTip = -1;
         let lastRafTs = -1;
         const reduceMotionMq = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -998,11 +1019,13 @@ export function ProgressLine() {
 
         window.addEventListener('wheel', handleWheel, { passive: false });
         window.addEventListener('scroll', handleScroll, { passive: true });
+        window.addEventListener('spine-navigate', handleNavigate);
         rafId = requestAnimationFrame(raf);
 
         return () => {
             window.removeEventListener('wheel', handleWheel);
             window.removeEventListener('scroll', handleScroll);
+            window.removeEventListener('spine-navigate', handleNavigate);
             cancelAnimationFrame(rafId);
         };
     }, [drawFrame]);

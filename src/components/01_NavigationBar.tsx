@@ -169,10 +169,13 @@ export default function NavigationGlass({
         const headerHeight = headerRef.current?.offsetHeight ?? 64;
         const top = section.getBoundingClientRect().top + window.scrollY - headerHeight - 10;
 
-        window.scrollTo({
-            top: Math.max(0, top),
-            behavior: 'smooth',
-        });
+        // Through the spine's own glide — NOT native smooth scroll, which the
+        // engine treats as an external jump and the drawn tip then trails the
+        // page by seconds (catch-up is capped per frame). Via the engine, page
+        // and line travel together.
+        window.dispatchEvent(
+            new CustomEvent('spine-navigate', { detail: { top: Math.max(0, top) } }),
+        );
 
         window.history.replaceState(null, '', `#${id}`);
     }, [homeHref]);
@@ -184,7 +187,9 @@ export default function NavigationGlass({
 
             event.preventDefault();
             closeMenu();
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            window.dispatchEvent(
+                new CustomEvent('spine-navigate', { detail: { top: 0 } }),
+            );
             window.history.replaceState(
                 null,
                 '',
@@ -395,9 +400,10 @@ export default function NavigationGlass({
                     display: flex;
                     align-items: center;
                     justify-content: flex-end;
-                    /* CTA separation must read wider than the 2rem inter-link
-                       gap, or the button joins the cluster. */
-                    gap: clamp(1.8rem, 3.3vw, 3.2rem);
+                    /* CTA separation must read wider than the inter-link gap,
+                       or the button joins the cluster. The last link's 1rem
+                       hit-area padding adds to this — visual total ~48px. */
+                    gap: clamp(1.4rem, 2.2vw, 2.2rem);
                 }
 
                 .glass-nav__links {
@@ -405,7 +411,11 @@ export default function NavigationGlass({
                     display: flex;
                     align-items: center;
                     justify-content: flex-end;
-                    gap: clamp(1.2rem, 2.2vw, 2rem);
+                    /* NO flex gap: the spacing lives as padding INSIDE each
+                       link, so the hover hit-areas touch. Traversing the menu
+                       always has exactly one link lit — no highlight → nothing
+                       → highlight stutter in the dead space between buttons. */
+                    gap: 0;
                 }
 
                 .glass-nav-link {
@@ -413,7 +423,11 @@ export default function NavigationGlass({
                     display: inline-flex;
                     align-items: baseline;
                     gap: 0.38rem;
-                    padding-block: 0.7rem;
+                    /* Padding fills the bar vertically AND carries the visual
+                       spacing horizontally (16px each side == the old 32px flex
+                       gap) — the whole strip is active hover area. */
+                    padding-block: 1.1rem;
+                    padding-inline: 1rem;
                     color: rgba(255, 255, 255, 0.68);
                     font-family: 'Rajdhani', monospace;
                     /* The site's label DNA: tiny uppercase, wide tracking —
@@ -426,9 +440,11 @@ export default function NavigationGlass({
                     text-transform: uppercase;
                     white-space: nowrap;
                     transform-origin: center;
+                    /* Slow dim/undim: the group recede breathes instead of
+                       snapping (color of the hovered link stays quick). */
                     transition:
                             color 0.34s cubic-bezier(0.16, 1, 0.3, 1),
-                            opacity 0.34s cubic-bezier(0.16, 1, 0.3, 1),
+                            opacity 0.55s cubic-bezier(0.16, 1, 0.3, 1),
                             transform 0.34s cubic-bezier(0.16, 1, 0.3, 1);
                 }
 
@@ -700,6 +716,7 @@ export default function NavigationGlass({
                 .glass-nav__mobile-links .glass-nav-link {
                     width: 100%;
                     padding-block: 0.95rem;
+                    padding-inline: 0;
                     gap: 0.7rem;
                     border-bottom: 1px solid rgba(255, 255, 255, 0.09);
                     font-size: 1.05rem;
@@ -734,13 +751,10 @@ export default function NavigationGlass({
                         gap: 1.35rem;
                     }
 
-                    .glass-nav__links {
-                        gap: 0.9rem;
-                    }
-
                     .glass-nav-link {
                         font-size: 0.75rem;
                         letter-spacing: 0.1em;
+                        padding-inline: 0.45rem;
                     }
 
                     .glass-nav-link__index {
@@ -925,7 +939,9 @@ function NameLink({ name, href, intro = 'skip', onClick }: NameLinkProps) {
             aria-label={word}
             data-hidden={hidden ? 'true' : 'false'}
             onMouseEnter={startFlicker}
+            onMouseLeave={startFlicker}
             onFocus={startFlicker}
+            onBlur={startFlicker}
             onClick={onClick}
         >
             <WaveLabel word={word} current={current} />
@@ -972,7 +988,9 @@ function SignalLink({
             aria-label={word}
             tabIndex={tabIndex}
             onMouseEnter={startFlicker}
+            onMouseLeave={startFlicker}
             onFocus={startFlicker}
+            onBlur={startFlicker}
             onClick={onClick}
         >
             <span className="glass-nav-link__index" aria-hidden="true">
@@ -1016,7 +1034,9 @@ function BookLink({
             data-hidden={hidden ? 'true' : 'false'}
             tabIndex={tabIndex}
             onMouseEnter={startFlicker}
+            onMouseLeave={startFlicker}
             onFocus={startFlicker}
+            onBlur={startFlicker}
             onClick={onClick}
         >
             <WaveLabel word={word} current={current} />

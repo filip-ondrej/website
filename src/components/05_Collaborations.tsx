@@ -62,7 +62,7 @@ export default function Collaborations() {
         const MAX_VEL = 600;
         // Hover must REST on the rail this long before it captures scrolling —
         // someone scrolling straight through the section must not get trapped.
-        const ARM_DELAY_MS = 1000;
+        const ARM_DELAY_MS = 600;
 
         const compute = () => {
             W = row.scrollWidth;

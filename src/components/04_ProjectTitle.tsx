@@ -202,7 +202,15 @@ export default function ProjectTitle({
                     {allLines.map((words, lineIdx) => (
                         <span key={lineIdx} className="pt-line">
                             {words.map((word, wordIdx) => {
-                                const idx = lineIdx * 10 + wordIdx;
+                                // Running word count across lines: the second
+                                // line follows straight after the first
+                                // (idx × 80ms). The old lineIdx*10 indexing
+                                // parked line 2 at 800ms+ — it read as a
+                                // separate, late animation.
+                                const idx =
+                                    allLines
+                                        .slice(0, lineIdx)
+                                        .reduce((n, l) => n + l.length, 0) + wordIdx;
                                 const isLast = wordIdx === words.length - 1;
 
                                 return (
